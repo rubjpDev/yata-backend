@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     secret_key: str = "change-me-in-production"
     environment: str = "local"
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 7
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
