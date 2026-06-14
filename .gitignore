@@ -222,3 +222,5 @@ __marimo__/
 
 # Claude Code machine-local settings (personal permission grants — not shared)
 .claude/settings.local.json
+
+.DS_Store
