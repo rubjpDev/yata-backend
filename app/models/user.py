@@ -1,31 +1,66 @@
-"""User, role, and profile ORM models."""
+"""User and athlete profile ORM models."""
 
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+import sqlalchemy as sa
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
+_DEFAULT_EQUIPMENT_OWNED: dict[str, bool] = {
+    "belt": False,
+    "knee_sleeves": False,
+    "knee_wraps": False,
+    "wrist_wraps": False,
+}
 
-class Role(StrEnum):
-    """User roles supported by the platform."""
 
-    trainer = "trainer"
-    trainee = "trainee"
+class Discipline(StrEnum):
+    """Training disciplines supported by the platform."""
+
+    powerlifting = "powerlifting"
 
 
-class User(Base):
-    """A registered account, either a trainer or a trainee."""
+class Unit(StrEnum):
+    """Load units an athlete may train in."""
 
-    __tablename__ = "users"
+    kg = "kg"
+    lb = "lb"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[Role] = mapped_column(Enum(Role, name="user_role"), nullable=False)
-    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+class CompStyle(StrEnum):
+    """Competition styles an athlete may compete under."""
+
+    raw = "raw"
+    classic = "classic"
+    equipped = "equipped"
+
+
+class AthleteProfile(Base):
+    """The single athlete profile, 1:1 with a `User`."""
+
+    __tablename__ = "athlete_profiles"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    discipline: Mapped[Discipline] = mapped_column(
+        Enum(Discipline, name="discipline"), nullable=False
+    )
+    unit: Mapped[Unit] = mapped_column(
+        Enum(Unit, name="unit"),
+        nullable=False,
+        server_default=Unit.kg.value,
+    )
+    comp_style: Mapped[CompStyle] = mapped_column(
+        Enum(CompStyle, name="comp_style"),
+        nullable=False,
+        server_default=CompStyle.classic.value,
+    )
+    equipment_owned: Mapped[dict[str, bool]] = mapped_column(
+        JSON, nullable=False, default=dict(_DEFAULT_EQUIPMENT_OWNED)
+    )
+    training_days_target: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -37,17 +72,28 @@ class User(Base):
     )
 
 
-class TrainerProfile(Base):
-    """Placeholder profile table for trainers."""
+class User(Base):
+    """A registered athlete account."""
 
-    __tablename__ = "trainer_profiles"
+    __tablename__ = "users"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa.false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
-
-class TraineeProfile(Base):
-    """Placeholder profile table for trainees."""
-
-    __tablename__ = "trainee_profiles"
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    profile: Mapped[AthleteProfile] = relationship(
+        AthleteProfile, uselist=False, lazy="joined"
+    )

@@ -1,9 +1,10 @@
-"""Async data access for users and their role profiles. No business rules."""
+"""Async data access for users and their athlete profiles. No business rules."""
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.user import Role, TraineeProfile, TrainerProfile, User
+from app.models.user import AthleteProfile, CompStyle, Discipline, Unit, User
 
 
 async def get_by_email(session: AsyncSession, email: str) -> User | None:
@@ -18,28 +19,46 @@ async def get_by_id(session: AsyncSession, user_id: int) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def get_by_id_with_profile(session: AsyncSession, user_id: int) -> User | None:
+    """Return the user with the given id, eagerly loading its athlete profile."""
+    result = await session.execute(
+        select(User).options(selectinload(User.profile)).where(User.id == user_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def create_user_with_profile(
     session: AsyncSession,
     email: str,
     hashed_password: str,
-    role: Role,
     display_name: str,
+    discipline: Discipline,
+    comp_style: CompStyle,
+    unit: Unit,
+    equipment_owned: dict[str, bool],
 ) -> User:
-    """Insert a user row and its matching role profile row in one transaction."""
+    """Insert a user row and its athlete profile row in one transaction."""
     user = User(
         email=email,
         hashed_password=hashed_password,
-        role=role,
         display_name=display_name,
     )
     session.add(user)
     await session.flush()
 
-    if role is Role.trainer:
-        session.add(TrainerProfile(user_id=user.id))
-    else:
-        session.add(TraineeProfile(user_id=user.id))
+    session.add(
+        AthleteProfile(
+            user_id=user.id,
+            discipline=discipline,
+            comp_style=comp_style,
+            unit=unit,
+            equipment_owned=equipment_owned,
+        )
+    )
 
     await session.commit()
-    await session.refresh(user)
-    return user
+
+    created = await get_by_id_with_profile(session, user.id)
+    if created is None:  # pragma: no cover - defensive: just-committed row
+        raise RuntimeError("Failed to load the just-created user with its profile")
+    return created

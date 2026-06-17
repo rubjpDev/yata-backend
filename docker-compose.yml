@@ -10,6 +10,12 @@ services:
       REDIS_URL: "redis://redis:6379"
       SECRET_KEY: "dev-secret-key"
       ENVIRONMENT: "docker"
+    # DX: bind-mount the source so route changes don't require a rebuild.
+    volumes:
+      - ./app:/app/app
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     depends_on:
       db:
         condition: service_healthy

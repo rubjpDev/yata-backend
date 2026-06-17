@@ -13,7 +13,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models.user import Role, User
+from app.models.user import CompStyle, Discipline, Unit, User
 from app.repositories import user_repository
 from app.schemas.auth import TokenPair
 
@@ -22,10 +22,13 @@ async def register(
     session: AsyncSession,
     email: str,
     password: str,
-    role: Role,
     display_name: str,
+    discipline: Discipline,
+    comp_style: CompStyle,
+    unit: Unit,
+    equipment_owned: dict[str, bool],
 ) -> User:
-    """Create a new user and its profile row, or raise EmailAlreadyExists."""
+    """Create a new user and its athlete profile, or raise EmailAlreadyExists."""
     existing = await user_repository.get_by_email(session, email)
     if existing is not None:
         raise EmailAlreadyExists("A user with this email already exists")
@@ -35,8 +38,11 @@ async def register(
         session,
         email=email,
         hashed_password=hashed,
-        role=role,
         display_name=display_name,
+        discipline=discipline,
+        comp_style=comp_style,
+        unit=unit,
+        equipment_owned=equipment_owned,
     )
 
 
@@ -47,8 +53,8 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> Toke
         raise InvalidCredentials("Invalid credentials")
 
     return TokenPair(
-        access_token=create_access_token(user.id, user.role),
-        refresh_token=create_refresh_token(user.id, user.role),
+        access_token=create_access_token(user.id),
+        refresh_token=create_refresh_token(user.id),
     )
 
 
@@ -65,9 +71,16 @@ async def refresh_access(session: AsyncSession, refresh_token: str) -> str:
     if user is None:
         raise InvalidCredentials("Invalid credentials")
 
-    return create_access_token(user.id, user.role)
+    return create_access_token(user.id)
 
 
 async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
     """Return the user with the given id, or None if not found."""
     return await user_repository.get_by_id(session, user_id)
+
+
+async def get_user_with_profile_by_id(
+    session: AsyncSession, user_id: int
+) -> User | None:
+    """Return the user with the given id, eagerly loading its athlete profile."""
+    return await user_repository.get_by_id_with_profile(session, user_id)

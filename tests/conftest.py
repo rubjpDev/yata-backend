@@ -54,8 +54,8 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
 def register_payload() -> dict[str, str]:
     """A valid registration payload reusable across tests."""
     return {
-        "email": "trainee@example.com",
+        "email": "athlete@example.com",
         "password": "Sup3rSecret!",
-        "role": "trainee",
-        "display_name": "Test Trainee",
+        "display_name": "Test Athlete",
+        "discipline": "powerlifting",
     }
