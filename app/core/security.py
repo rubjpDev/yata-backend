@@ -9,7 +9,6 @@ from argon2.exceptions import VerifyMismatchError
 
 from app.config import settings
 from app.core.errors import InvalidToken
-from app.models.user import Role
 
 _password_hasher = PasswordHasher()
 
@@ -32,14 +31,11 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def _build_token(
-    user_id: int, role: Role, token_type: TokenType, ttl: timedelta
-) -> str:
-    """Encode a JWT with sub/role/iat/exp/type claims."""
+def _build_token(user_id: int, token_type: TokenType, ttl: timedelta) -> str:
+    """Encode a JWT with sub/iat/exp/type claims."""
     now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": str(user_id),
-        "role": role.value,
         "iat": now,
         "exp": now + ttl,
         "type": token_type,
@@ -47,16 +43,16 @@ def _build_token(
     return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(user_id: int, role: Role) -> str:
+def create_access_token(user_id: int) -> str:
     """Create a short-lived access token."""
     ttl = timedelta(minutes=settings.access_token_ttl_minutes)
-    return _build_token(user_id, role, "access", ttl)
+    return _build_token(user_id, "access", ttl)
 
 
-def create_refresh_token(user_id: int, role: Role) -> str:
+def create_refresh_token(user_id: int) -> str:
     """Create a long-lived refresh token."""
     ttl = timedelta(days=settings.refresh_token_ttl_days)
-    return _build_token(user_id, role, "refresh", ttl)
+    return _build_token(user_id, "refresh", ttl)
 
 
 def decode_token(token: str, expected_type: TokenType) -> dict[str, Any]:

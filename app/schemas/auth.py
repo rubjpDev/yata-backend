@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, EmailStr, StringConstraints
 
-from app.models.user import Role
+from app.models.user import CompStyle, Discipline, Unit
 
 PasswordStr = Annotated[
     str,
@@ -12,13 +12,25 @@ PasswordStr = Annotated[
 ]
 
 
+class EquipmentOwned(BaseModel):
+    """Competition equipment an athlete owns, all defaulting to unowned."""
+
+    belt: bool = False
+    knee_sleeves: bool = False
+    knee_wraps: bool = False
+    wrist_wraps: bool = False
+
+
 class RegisterRequest(BaseModel):
     """Payload for POST /v1/auth/register."""
 
     email: EmailStr
     password: PasswordStr
-    role: Role
     display_name: str
+    discipline: Discipline
+    comp_style: CompStyle = CompStyle.classic
+    unit: Unit = Unit.kg
+    equipment_owned: EquipmentOwned = EquipmentOwned()
 
 
 class LoginRequest(BaseModel):

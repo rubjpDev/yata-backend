@@ -12,7 +12,6 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models.user import Role
 
 
 def test_hash_and_verify_round_trip() -> None:
@@ -29,12 +28,11 @@ def test_verify_wrong_password_returns_false() -> None:
 
 
 def test_access_token_has_expected_claims_and_type() -> None:
-    """Access tokens carry sub/role/iat/exp and type=access."""
-    token = create_access_token(user_id=42, role=Role.trainer)
+    """Access tokens carry sub/iat/exp and type=access."""
+    token = create_access_token(user_id=42)
     payload = decode_token(token, expected_type="access")
 
     assert payload["sub"] == "42"
-    assert payload["role"] == "trainer"
     assert payload["type"] == "access"
     assert "iat" in payload
     assert "exp" in payload
@@ -42,7 +40,7 @@ def test_access_token_has_expected_claims_and_type() -> None:
 
 def test_refresh_token_has_type_refresh() -> None:
     """Refresh tokens carry type=refresh."""
-    token = create_refresh_token(user_id=7, role=Role.trainee)
+    token = create_refresh_token(user_id=7)
     payload = decode_token(token, expected_type="refresh")
 
     assert payload["type"] == "refresh"
@@ -51,7 +49,7 @@ def test_refresh_token_has_type_refresh() -> None:
 
 def test_decode_token_rejects_wrong_type() -> None:
     """An access token presented where a refresh token is expected is invalid."""
-    token = create_access_token(user_id=1, role=Role.trainee)
+    token = create_access_token(user_id=1)
     with pytest.raises(InvalidToken):
         decode_token(token, expected_type="refresh")
 
@@ -67,7 +65,7 @@ def test_decode_token_rejects_expired_token(monkeypatch: pytest.MonkeyPatch) -> 
     from app.config import settings
 
     monkeypatch.setattr(settings, "access_token_ttl_minutes", 0)
-    token = create_access_token(user_id=1, role=Role.trainee)
+    token = create_access_token(user_id=1)
     time.sleep(1)
 
     with pytest.raises(InvalidToken):

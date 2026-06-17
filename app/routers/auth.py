@@ -21,6 +21,7 @@ router = APIRouter()
 
 _INVALID_CREDENTIALS_DETAIL = "Invalid credentials"
 _INVALID_TOKEN_DETAIL = "Could not validate credentials"
+_USER_NOT_FOUND_DETAIL = "Could not validate credentials"
 
 
 @router.post(
@@ -31,14 +32,17 @@ _INVALID_TOKEN_DETAIL = "Could not validate credentials"
 async def register(
     payload: RegisterRequest, session: AsyncSession = Depends(get_db)
 ) -> User:
-    """Create a new user and its role profile."""
+    """Create a new athlete and their athlete profile."""
     try:
         return await auth_service.register(
             session,
             email=payload.email,
             password=payload.password,
-            role=payload.role,
             display_name=payload.display_name,
+            discipline=payload.discipline,
+            comp_style=payload.comp_style,
+            unit=payload.unit,
+            equipment_owned=payload.equipment_owned.model_dump(),
         )
     except EmailAlreadyExists as exc:
         raise HTTPException(
@@ -81,6 +85,15 @@ async def refresh(
 
 
 @router.get("/me", response_model=UserRead)
-async def read_current_user(user: User = Depends(get_current_user)) -> User:
-    """Return the authenticated user's profile."""
-    return user
+async def read_current_user(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> User:
+    """Return the authenticated athlete's identity and athlete profile."""
+    current = await auth_service.get_user_with_profile_by_id(session, user.id)
+    if current is None:  # pragma: no cover - defensive: user just resolved above
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_USER_NOT_FOUND_DETAIL,
+        )
+    return current

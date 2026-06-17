@@ -1,6 +1,4 @@
-"""Authentication and RBAC dependencies for FastAPI routes."""
-
-from collections.abc import Awaitable, Callable
+"""Authentication dependencies for FastAPI routes."""
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -9,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import InvalidToken
 from app.core.security import decode_token
 from app.db.session import get_db
-from app.models.user import Role, User
+from app.models.user import User
 from app.services import auth_service
 
 _bearer_scheme = HTTPBearer()
@@ -38,17 +36,3 @@ async def get_current_user(
         )
 
     return user
-
-
-def require_role(*roles: Role) -> Callable[..., Awaitable[User]]:
-    """Build a dependency that authenticates and authorizes against `roles`."""
-
-    async def _dependency(user: User = Depends(get_current_user)) -> User:
-        if user.role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions",
-            )
-        return user
-
-    return _dependency
