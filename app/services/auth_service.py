@@ -28,13 +28,13 @@ async def register(
     unit: Unit,
     equipment_owned: dict[str, bool],
 ) -> User:
-    """Create a new user and its athlete profile, or raise EmailAlreadyExists."""
+    """Create a new athlete as a single user row, or raise EmailAlreadyExists."""
     existing = await user_repository.get_by_email(session, email)
     if existing is not None:
         raise EmailAlreadyExists("A user with this email already exists")
 
     hashed = hash_password(password)
-    return await user_repository.create_user_with_profile(
+    return await user_repository.create_user(
         session,
         email=email,
         hashed_password=hashed,
@@ -77,10 +77,3 @@ async def refresh_access(session: AsyncSession, refresh_token: str) -> str:
 async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
     """Return the user with the given id, or None if not found."""
     return await user_repository.get_by_id(session, user_id)
-
-
-async def get_user_with_profile_by_id(
-    session: AsyncSession, user_id: int
-) -> User | None:
-    """Return the user with the given id, eagerly loading its athlete profile."""
-    return await user_repository.get_by_id_with_profile(session, user_id)

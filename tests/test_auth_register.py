@@ -4,7 +4,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import AthleteProfile, User
+from app.models.user import User
 
 
 async def test_register_returns_201_with_user_and_no_password(
@@ -43,11 +43,11 @@ async def test_register_with_explicit_profile_fields_persists_them(
     response = await client.post("/v1/auth/register", json=payload)
 
     assert response.status_code == 201
-    profile = response.json()["profile"]
-    assert profile["discipline"] == "powerlifting"
-    assert profile["comp_style"] == "raw"
-    assert profile["unit"] == "lb"
-    assert profile["equipment_owned"] == {
+    body = response.json()
+    assert body["discipline"] == "powerlifting"
+    assert body["comp_style"] == "raw"
+    assert body["unit"] == "lb"
+    assert body["equipment_owned"] == {
         "belt": True,
         "knee_sleeves": True,
         "knee_wraps": False,
@@ -55,17 +55,17 @@ async def test_register_with_explicit_profile_fields_persists_them(
     }
 
 
-async def test_register_creates_matching_athlete_profile(
+async def test_register_creates_single_user_row(
     client: AsyncClient, db_session: AsyncSession, register_payload: dict[str, str]
 ) -> None:
-    """Registering an athlete creates the matching athlete_profiles row."""
+    """Registering an athlete creates exactly one users row with its fields."""
     response = await client.post("/v1/auth/register", json=register_payload)
     user_id = response.json()["id"]
 
-    result = await db_session.execute(
-        select(AthleteProfile).where(AthleteProfile.user_id == user_id)
-    )
-    assert result.scalar_one_or_none() is not None
+    result = await db_session.execute(select(User).where(User.id == user_id))
+    created = result.scalar_one_or_none()
+    assert created is not None
+    assert created.discipline == "powerlifting"
 
 
 async def test_register_omitted_optionals_apply_defaults(
@@ -81,10 +81,10 @@ async def test_register_omitted_optionals_apply_defaults(
     response = await client.post("/v1/auth/register", json=payload)
 
     assert response.status_code == 201
-    profile = response.json()["profile"]
-    assert profile["comp_style"] == "classic"
-    assert profile["unit"] == "kg"
-    assert profile["equipment_owned"] == {
+    body = response.json()
+    assert body["comp_style"] == "classic"
+    assert body["unit"] == "kg"
+    assert body["equipment_owned"] == {
         "belt": False,
         "knee_sleeves": False,
         "knee_wraps": False,

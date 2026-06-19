@@ -32,7 +32,7 @@ _USER_NOT_FOUND_DETAIL = "Could not validate credentials"
 async def register(
     payload: RegisterRequest, session: AsyncSession = Depends(get_db)
 ) -> User:
-    """Create a new athlete and their athlete profile."""
+    """Create a new athlete as a single user row."""
     try:
         return await auth_service.register(
             session,
@@ -89,8 +89,8 @@ async def read_current_user(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> User:
-    """Return the authenticated athlete's identity and athlete profile."""
-    current = await auth_service.get_user_with_profile_by_id(session, user.id)
+    """Return the authenticated athlete's identity and athlete fields."""
+    current = await auth_service.get_user_by_id(session, user.id)
     if current is None:  # pragma: no cover - defensive: user just resolved above
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

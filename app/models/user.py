@@ -1,11 +1,11 @@
-"""User and athlete profile ORM models."""
+"""User ORM model: a single-table athlete (identity + athlete fields)."""
 
 from datetime import datetime
 from enum import StrEnum
 
 import sqlalchemy as sa
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import JSON, Boolean, DateTime, Enum, Integer, String, func
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
@@ -38,12 +38,18 @@ class CompStyle(StrEnum):
     equipped = "equipped"
 
 
-class AthleteProfile(Base):
-    """The single athlete profile, 1:1 with a `User`."""
+class User(Base):
+    """A registered athlete account: identity + athlete fields, single table."""
 
-    __tablename__ = "athlete_profiles"
+    __tablename__ = "users"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa.false()
+    )
     discipline: Mapped[Discipline] = mapped_column(
         Enum(Discipline, name="discipline"), nullable=False
     )
@@ -69,31 +75,4 @@ class AthleteProfile(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
-    )
-
-
-class User(Base):
-    """A registered athlete account."""
-
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_admin: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=sa.false()
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
-
-    profile: Mapped[AthleteProfile] = relationship(
-        AthleteProfile, uselist=False, lazy="joined"
     )
