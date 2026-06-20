@@ -1,10 +1,12 @@
-"""Health check router."""
+"""Health check route."""
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 
 class HealthResponse(BaseModel):
+    """Service health status."""
+
     status: str
 
 

@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 
-from app.routers import auth, health
+from app import auth, bodyweight, exercises, health
 
 app = FastAPI(
     title="YATA API",
@@ -12,3 +12,5 @@ app = FastAPI(
 
 app.include_router(health.router, prefix="/v1")
 app.include_router(auth.router, prefix="/v1")
+app.include_router(exercises.router, prefix="/v1")
+app.include_router(bodyweight.router, prefix="/v1")

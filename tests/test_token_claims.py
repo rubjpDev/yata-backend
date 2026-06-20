@@ -1,6 +1,6 @@
 """Tests asserting JWT claim sets carry no trainer/trainee role claim."""
 
-from app.core.security import create_access_token, create_refresh_token, decode_token
+from app.security import create_access_token, create_refresh_token, decode_token
 
 
 def test_access_token_claims_are_exactly_sub_exp_iat_type() -> None:

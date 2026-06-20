@@ -2,13 +2,13 @@
 
 from httpx import AsyncClient
 
-from app.core.security import create_access_token, create_refresh_token
+from app.security import create_access_token, create_refresh_token
 
 
-async def test_me_with_valid_access_token_returns_identity_and_profile(
+async def test_me_with_valid_access_token_returns_identity_and_athlete_fields(
     client: AsyncClient, register_payload: dict[str, str]
 ) -> None:
-    """A valid access token resolves the current user plus athlete profile."""
+    """A valid access token resolves the current user's identity + athlete fields."""
     register_response = await client.post("/v1/auth/register", json=register_payload)
     login_response = await client.post(
         "/v1/auth/login",
@@ -31,17 +31,16 @@ async def test_me_with_valid_access_token_returns_identity_and_profile(
     assert "hashed_password" not in body
     assert "role" not in body
 
-    profile = body["profile"]
-    assert profile["discipline"] == "powerlifting"
-    assert profile["unit"] == "kg"
-    assert profile["comp_style"] == "classic"
-    assert profile["equipment_owned"] == {
+    assert body["discipline"] == "powerlifting"
+    assert body["unit"] == "kg"
+    assert body["comp_style"] == "classic"
+    assert body["equipment_owned"] == {
         "belt": False,
         "knee_sleeves": False,
         "knee_wraps": False,
         "wrist_wraps": False,
     }
-    assert profile["training_days_target"] is None
+    assert body["training_days_target"] is None
 
 
 async def test_me_with_no_token_returns_401(client: AsyncClient) -> None:
