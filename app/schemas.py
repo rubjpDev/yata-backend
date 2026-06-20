@@ -1,5 +1,6 @@
 """All Pydantic v2 request and response schemas."""
 
+from datetime import date as Date
 from datetime import datetime
 from typing import Annotated
 
@@ -10,6 +11,7 @@ from pydantic import (
     Field,
     StringConstraints,
     computed_field,
+    field_validator,
 )
 
 from app.models import CompStyle, Discipline, ExerciseCategory, Unit
@@ -113,3 +115,32 @@ class ExerciseRead(BaseModel):
     def is_custom(self) -> bool:
         """True when the exercise belongs to a user (created_by is not NULL)."""
         return self.created_by is not None
+
+
+class BodyweightCreate(BaseModel):
+    """Payload for POST /v1/bodyweight (upsert by athlete + bodyweight)"""
+
+    date: Date
+    weight_kg: float = Field(gt=0.0)
+
+    @field_validator("date")
+    @classmethod
+    def date_not_in_future(cls, value: Date) -> Date:
+        """Reject logs dates after today (server-local date)"""
+
+        if value > Date.today():
+            raise ValueError("Date cannot be in the future")
+        return value
+
+
+class BodyweightRead(BaseModel):
+    """Public representation of bodyweight log"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    athlete_id: int
+    date: Date
+    weight_kg: float
+    created_at: datetime
+    updated_at: datetime

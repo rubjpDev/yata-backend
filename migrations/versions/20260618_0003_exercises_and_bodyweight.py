@@ -22,7 +22,7 @@ exercise_category_enum = sa.Enum(
     "squat", "bench", "deadlift", "accessory", name="exercise_category"
 )
 
-# System exercises seeded with created_by NULL. Idempotent insert below
+# System exercises seeded with created_by NULL. Idempotent insert below.
 _SYSTEM_EXERCISES: list[tuple[str, str, str]] = [
     ("Squat", "squat", "{quads,glutes,core}"),
     ("Bench Press", "bench", "{chest,shoulders,triceps}"),
@@ -42,7 +42,6 @@ _SYSTEM_EXERCISES: list[tuple[str, str, str]] = [
 
 def upgrade() -> None:
     """Create exercises + bodyweight_logs, their indexes, and the system seed."""
-
     op.create_table(
         "exercises",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -50,8 +49,9 @@ def upgrade() -> None:
         sa.Column("category", exercise_category_enum, nullable=False),
         sa.Column(
             "muscle_groups",
-            postgresql.JSONB(astext_type=sa.Text()),
+            postgresql.ARRAY(sa.String()),
             nullable=False,
+            server_default="{}",
         ),
         sa.Column("created_by", sa.Integer(), nullable=True),
         sa.Column(
@@ -62,12 +62,37 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["created_by"], ["users.id"]),
     )
+
     # Two complementary uniqueness rules (acceptance #2):
     #  - partial unique on name for system rows (created_by IS NULL), because in
     #    SQL NULL != NULL so a plain UNIQUE would not prevent duplicate system
     #    names.
     #  - composite unique (created_by, name) so a user cannot duplicate one of
     #    their own custom names.
+    op.create_index(
+        "uq_exercises_system_name",
+        "exercises",
+        ["name"],
+        unique=True,
+        postgresql_where=sa.text("created_by IS NULL"),
+    )
+    op.create_unique_constraint(
+        "uq_exercises_owner_name", "exercises", ["created_by", "name"]
+    )
+
+    # Idempotent system seed (acceptance #3). ON CONFLICT target must match the
+    # partial unique index above, otherwise PostgreSQL rejects the statement.
+    values = ", ".join(
+        f"('{name}', '{category}', '{groups}', NULL)"
+        for name, category, groups in _SYSTEM_EXERCISES
+    )
+    op.execute(
+        sa.text(
+            "INSERT INTO exercises (name, category, muscle_groups, created_by) "
+            f"VALUES {values} "
+            "ON CONFLICT (name) WHERE created_by IS NULL DO NOTHING"
+        )
+    )
 
     op.create_table(
         "bodyweight_logs",
