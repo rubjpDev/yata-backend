@@ -11,12 +11,12 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+# Import the models package so Base.metadata is fully populated before
+# create_all (users, exercises, bodyweight_logs all register here).
+import app.models as _models  # noqa: F401
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-
-# Import models so Base.metadata is populated before create_all.
-from app.models import user as _user_models  # noqa: F401
 
 
 @pytest_asyncio.fixture
