@@ -18,10 +18,12 @@ down_revision: str | Sequence[str] | None = "20260617_0002"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-exercise_category_enum = sa.Enum("squat", "bench", "deadlift", "accessory", name="exercise_category")
+exercise_category_enum = sa.Enum(
+    "squat", "bench", "deadlift", "accessory", name="exercise_category"
+)
 
-#System exercises seeded with created_by NULL. Idempotent insert below
-_SYSTEM_EXERCISES: list[tuple[str,str,str]] = [
+# System exercises seeded with created_by NULL. Idempotent insert below
+_SYSTEM_EXERCISES: list[tuple[str, str, str]] = [
     ("Squat", "squat", "{quads,glutes,core}"),
     ("Bench Press", "bench", "{chest,shoulders,triceps}"),
     ("Deadlift", "deadlift", "{hamstrings,glutes,back}"),
@@ -36,6 +38,8 @@ _SYSTEM_EXERCISES: list[tuple[str,str,str]] = [
     ("Bicep Curl", "accessory", "{biceps}"),
     ("Tricep Pushdown", "accessory", "{triceps}"),
 ]
+
+
 def upgrade() -> None:
     """Create exercises + bodyweight_logs, their indexes, and the system seed."""
 
@@ -44,12 +48,21 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("category", exercise_category_enum, nullable=False),
-        sa.Column("muscle_groups", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column(
+            "muscle_groups",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+        ),
         sa.Column("created_by", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["created_by"], ["users.id"]),
     )
-      # Two complementary uniqueness rules (acceptance #2):
+    # Two complementary uniqueness rules (acceptance #2):
     #  - partial unique on name for system rows (created_by IS NULL), because in
     #    SQL NULL != NULL so a plain UNIQUE would not prevent duplicate system
     #    names.
@@ -86,4 +99,4 @@ def downgrade() -> None:
     op.drop_table("exercises")
     # `drop_table` does not reliably drop the enum type of the column it held,
     # so drop it explicitly (mirrors the 0002 revision pattern).
-    exercise_category_enum.drop(op.get_bind(), checkfirst=True) 
+    exercise_category_enum.drop(op.get_bind(), checkfirst=True)

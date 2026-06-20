@@ -6,13 +6,15 @@ from typing import Any, Literal
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from fastapi import HTTPException, status
 
 from app.config import settings
-from app.core.errors import InvalidToken
 
 _password_hasher = PasswordHasher()
 
 TokenType = Literal["access", "refresh"]
+
+_CREDENTIALS_ERROR_DETAIL = "Could not validate credentials"
 
 
 def hash_password(plain: str) -> str:
@@ -58,18 +60,23 @@ def create_refresh_token(user_id: int) -> str:
 def decode_token(token: str, expected_type: TokenType) -> dict[str, Any]:
     """Decode and validate a JWT, enforcing its `type` claim.
 
-    Raises InvalidToken on any signature, expiry, format, or type mismatch.
+    Raises HTTPException(401) on any signature, expiry, format, or type
+    mismatch, with a generic detail (never reveals which check failed).
     """
     try:
         payload = jwt.decode(
             token, settings.secret_key, algorithms=[settings.jwt_algorithm]
         )
-    except jwt.ExpiredSignatureError as exc:
-        raise InvalidToken("Token has expired") from exc
     except jwt.InvalidTokenError as exc:
-        raise InvalidToken("Token is invalid") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_CREDENTIALS_ERROR_DETAIL,
+        ) from exc
 
     if payload.get("type") != expected_type:
-        raise InvalidToken("Unexpected token type")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_CREDENTIALS_ERROR_DETAIL,
+        )
 
     return payload

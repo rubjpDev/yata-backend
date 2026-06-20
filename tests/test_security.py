@@ -1,11 +1,11 @@
-"""Unit tests for app.core.security: hashing and JWT helpers."""
+"""Unit tests for app.security: hashing and JWT helpers."""
 
 import time
 
 import pytest
+from fastapi import HTTPException
 
-from app.core.errors import InvalidToken
-from app.core.security import (
+from app.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -50,23 +50,23 @@ def test_refresh_token_has_type_refresh() -> None:
 def test_decode_token_rejects_wrong_type() -> None:
     """An access token presented where a refresh token is expected is invalid."""
     token = create_access_token(user_id=1)
-    with pytest.raises(InvalidToken):
+    with pytest.raises(HTTPException):
         decode_token(token, expected_type="refresh")
 
 
 def test_decode_token_rejects_malformed_token() -> None:
-    """A malformed token string raises InvalidToken."""
-    with pytest.raises(InvalidToken):
+    """A malformed token string raises HTTPException(401)."""
+    with pytest.raises(HTTPException):
         decode_token("not-a-jwt", expected_type="access")
 
 
 def test_decode_token_rejects_expired_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An expired token raises InvalidToken."""
+    """An expired token raises HTTPException(401)."""
     from app.config import settings
 
     monkeypatch.setattr(settings, "access_token_ttl_minutes", 0)
     token = create_access_token(user_id=1)
     time.sleep(1)
 
-    with pytest.raises(InvalidToken):
+    with pytest.raises(HTTPException):
         decode_token(token, expected_type="access")
