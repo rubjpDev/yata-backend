@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine, sessionmaker, and FastAPI session dependency."""
+"""Declarative base, async engine, sessionmaker, and FastAPI session dependency."""
 
 from collections.abc import AsyncGenerator
 
@@ -7,8 +7,14 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+
+
+class Base(DeclarativeBase):
+    """Base class for all ORM models; its metadata drives Alembic and tests."""
+
 
 engine = create_async_engine(settings.database_url)
 

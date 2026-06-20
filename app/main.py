@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 
-from app.routers import auth, health
+from app import auth, health
 
 app = FastAPI(
     title="YATA API",

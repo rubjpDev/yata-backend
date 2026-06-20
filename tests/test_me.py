@@ -2,7 +2,7 @@
 
 from httpx import AsyncClient
 
-from app.core.security import create_access_token, create_refresh_token
+from app.security import create_access_token, create_refresh_token
 
 
 async def test_me_with_valid_access_token_returns_identity_and_athlete_fields(
