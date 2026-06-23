@@ -1,0 +1,59 @@
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CADDY_HOST: ${CADDY_HOST}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  api:
+    image: ${ECR_IMAGE}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://yata:yata@db:5432/yata"
+      REDIS_URL: "redis://redis:6379"
+      SECRET_KEY: ${SECRET_KEY}
+      ENVIRONMENT: "production"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: yata
+      POSTGRES_PASSWORD: yata
+      POSTGRES_DB: yata
+    volumes:
+      - /data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yata -d yata"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  caddy_data:
+  caddy_config:
