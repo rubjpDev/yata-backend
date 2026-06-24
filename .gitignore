@@ -224,3 +224,22 @@ __marimo__/
 .claude/settings.local.json
 
 .DS_Store
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+# .tfvars commonly hold secrets
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*tfplan*
+.terraformrc
+terraform.rc
+# Keep the dependency lock and example tfvars
+!.terraform.lock.hcl
