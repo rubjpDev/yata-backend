@@ -13,7 +13,9 @@ from app.engine import (
     e1rm_best_of_recent,
     estimate_1rm,
     estimated_rpe,
+    lifts_needed,
     load_for,
+    prescribe_week,
     should_deload,
     weekly_volume_status,
 )
@@ -221,3 +223,113 @@ def test_deload_accumulates_multiple_reasons() -> None:
     fired, reasons = should_deload(history, NOW)
     assert fired is True
     assert len(reasons) == 2
+
+
+_E1RM_BY_LIFT = {"squat": 150.0, "bench": 100.0, "deadlift": 180.0}
+
+
+def test_prescribe_week_accumulation_happy_path() -> None:
+    """4 days of accumulation: squat/bench/deadlift/full, day_offset 0/2/4/6."""
+    sessions = prescribe_week("accumulation", 4, _E1RM_BY_LIFT, week_index=1)
+    assert [s.session_type for s in sessions] == ["squat", "bench", "deadlift", "full"]
+    assert [s.day_offset for s in sessions] == [0, 2, 4, 6]
+
+    squat_session = sessions[0]
+    assert [s.set_type for s in squat_session.sets] == ["working", "backoff"]
+    working, backoff = squat_session.sets
+    assert working.reps == 5
+    assert working.intensity == 7.0
+    assert working.weight_kg == load_for(150.0, 5, 7.0)
+    assert backoff.reps == 8
+    assert backoff.intensity == 6.5
+    assert backoff.weight_kg == load_for(150.0, 8, 6.5)
+
+    full_session = sessions[3]
+    assert [s.lift for s in full_session.sets] == ["squat", "bench", "deadlift"]
+    assert all(s.set_type == "working" for s in full_session.sets)
+
+
+def test_prescribe_week_intensification_happy_path() -> None:
+    """Intensification: 4x3 @ 8.5 working, 2x5 @ 7.0 backoff."""
+    sessions = prescribe_week("intensification", 1, _E1RM_BY_LIFT, week_index=1)
+    working, backoff = sessions[0].sets
+    assert (working.reps, working.intensity) == (3, 8.5)
+    assert (backoff.reps, backoff.intensity) == (5, 7.0)
+
+
+def test_prescribe_week_peak_happy_path() -> None:
+    """Peak: 3x2 @ 9.0 working, 1x4 @ 7.0 backoff."""
+    sessions = prescribe_week("peak", 1, _E1RM_BY_LIFT, week_index=1)
+    working, backoff = sessions[0].sets
+    assert (working.reps, working.intensity) == (2, 9.0)
+    assert (backoff.reps, backoff.intensity) == (4, 7.0)
+
+
+def test_prescribe_week_deload_happy_path() -> None:
+    """Deload: 2x5 @ 6.0 working only, no backoff."""
+    sessions = prescribe_week("deload", 1, _E1RM_BY_LIFT, week_index=1)
+    assert len(sessions[0].sets) == 1
+    working = sessions[0].sets[0]
+    assert (working.reps, working.intensity) == (5, 6.0)
+
+
+def test_prescribe_week_general_happy_path() -> None:
+    """General: 3x5 @ 7.5 working, 2x8 @ 6.5 backoff."""
+    sessions = prescribe_week("general", 1, _E1RM_BY_LIFT, week_index=1)
+    working, backoff = sessions[0].sets
+    assert (working.reps, working.intensity) == (5, 7.5)
+    assert (backoff.reps, backoff.intensity) == (8, 6.5)
+
+
+def test_prescribe_week_progresses_rpe_by_week() -> None:
+    """Week 2 adds +0.5 RPE to every base RPE; the weight follows load_for."""
+    week1 = prescribe_week("accumulation", 1, _E1RM_BY_LIFT, week_index=1)
+    week2 = prescribe_week("accumulation", 1, _E1RM_BY_LIFT, week_index=2)
+    assert week2[0].sets[0].intensity == week1[0].sets[0].intensity + 0.5
+    assert week2[0].sets[0].weight_kg == load_for(150.0, 5, 7.5)
+
+
+def test_prescribe_week_caps_rpe_at_ten() -> None:
+    """A late week_index never asks for more than RPE 10.0."""
+    far_week = prescribe_week("peak", 1, _E1RM_BY_LIFT, week_index=20)
+    assert far_week[0].sets[0].intensity == 10.0
+
+
+def test_prescribe_week_rejects_unknown_intent() -> None:
+    """An unsupported intent names itself in the error."""
+    with pytest.raises(ValueError, match="unknown intent"):
+        prescribe_week("strength", 1, _E1RM_BY_LIFT, week_index=1)
+
+
+def test_prescribe_week_rejects_out_of_range_days() -> None:
+    """days below 1 or above the template's session count both raise."""
+    with pytest.raises(ValueError, match="days"):
+        prescribe_week("accumulation", 0, _E1RM_BY_LIFT, week_index=1)
+    with pytest.raises(ValueError, match="days"):
+        prescribe_week("accumulation", 5, _E1RM_BY_LIFT, week_index=1)
+
+
+def test_prescribe_week_rejects_bad_week_index() -> None:
+    """week_index below 1 raises."""
+    with pytest.raises(ValueError, match="week_index"):
+        prescribe_week("accumulation", 1, _E1RM_BY_LIFT, week_index=0)
+
+
+def test_prescribe_week_rejects_missing_lift() -> None:
+    """A lift the template needs but the caller did not supply names itself."""
+    with pytest.raises(ValueError, match="bench"):
+        prescribe_week("accumulation", 4, {"squat": 150.0, "deadlift": 180.0}, 1)
+
+
+def test_lifts_needed_grows_with_days() -> None:
+    """1 day needs only squat; 4 days need all three main lifts."""
+    assert lifts_needed("accumulation", 1) == {"squat"}
+    assert lifts_needed("accumulation", 4) == {"squat", "bench", "deadlift"}
+
+
+def test_lifts_needed_rejects_bad_input() -> None:
+    """Unknown intent and out-of-range days raise, same as prescribe_week."""
+    with pytest.raises(ValueError, match="unknown intent"):
+        lifts_needed("strength", 1)
+    with pytest.raises(ValueError, match="days"):
+        lifts_needed("accumulation", 5)
