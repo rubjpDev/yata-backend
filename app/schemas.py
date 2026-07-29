@@ -14,7 +14,15 @@ from pydantic import (
     field_validator,
 )
 
-from app.models import CompStyle, Discipline, ExerciseCategory, Unit
+from app.models import (
+    BlockIntent,
+    BlockStatus,
+    CompStyle,
+    Discipline,
+    ExerciseCategory,
+    Unit,
+    WeekStatus,
+)
 
 PasswordStr = Annotated[
     str,
@@ -144,3 +152,41 @@ class BodyweightRead(BaseModel):
     weight_kg: float
     created_at: datetime
     updated_at: datetime
+
+
+class BlockCreate(BaseModel):
+    """Payload for POST /v1/blocks: creates the block and its first week."""
+
+    intent: BlockIntent
+    planned_weeks: int = Field(ge=1)
+    start_date: Date
+    days: int = Field(ge=1, le=4)
+    seed_1rm_kg: dict[str, float] = Field(default_factory=dict)
+
+
+class WeekRead(BaseModel):
+    """Public representation of a training week."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    block_id: int
+    week_index: int
+    days_planned: int
+    status: WeekStatus
+    created_at: datetime
+
+
+class BlockRead(BaseModel):
+    """Public representation of a block, with its training weeks."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    athlete_id: int
+    intent: BlockIntent
+    planned_weeks: int
+    start_date: Date
+    status: BlockStatus
+    created_at: datetime
+    weeks: list[WeekRead] = Field(default_factory=list)

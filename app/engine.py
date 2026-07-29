@@ -47,6 +47,206 @@ DELOAD_STALL_TOLERANCE: Final = 0.005  # e1RM gains under 0.5% count as flat
 DELOAD_RPE_CREEP: Final = 1.0
 DELOAD_MRV_WEEKS: Final = 2
 
+Intent = Literal["accumulation", "intensification", "peak", "deload", "general"]
+
+# `(lift, set_type, reps, base_rpe)` written out literally, backoffs included.
+_SetSpec = tuple[str, str, int, float]
+# `(session_type, sets)`.
+_SessionTemplate = tuple[str, tuple[_SetSpec, ...]]
+
+# Self-authored: round-number set/rep/RPE targets per intent, written for this
+# project; no published program (5/3/1, Sheiko, RTS, Juggernaut, ...) reproduced.
+WEEK_TEMPLATES: Final[dict[Intent, tuple[_SessionTemplate, ...]]] = {
+    "accumulation": (
+        ("squat", (("squat", "working", 5, 7.0), ("squat", "backoff", 8, 6.5))),
+        ("bench", (("bench", "working", 5, 7.0), ("bench", "backoff", 8, 6.5))),
+        (
+            "deadlift",
+            (("deadlift", "working", 5, 7.0), ("deadlift", "backoff", 8, 6.5)),
+        ),
+        (
+            "full",
+            (
+                ("squat", "working", 5, 6.0),
+                ("bench", "working", 5, 6.0),
+                ("deadlift", "working", 5, 6.0),
+            ),
+        ),
+    ),
+    "intensification": (
+        ("squat", (("squat", "working", 3, 8.5), ("squat", "backoff", 5, 7.0))),
+        ("bench", (("bench", "working", 3, 8.5), ("bench", "backoff", 5, 7.0))),
+        (
+            "deadlift",
+            (("deadlift", "working", 3, 8.5), ("deadlift", "backoff", 5, 7.0)),
+        ),
+        (
+            "full",
+            (
+                ("squat", "working", 3, 7.5),
+                ("bench", "working", 3, 7.5),
+                ("deadlift", "working", 3, 7.5),
+            ),
+        ),
+    ),
+    "peak": (
+        ("squat", (("squat", "working", 2, 9.0), ("squat", "backoff", 4, 7.0))),
+        ("bench", (("bench", "working", 2, 9.0), ("bench", "backoff", 4, 7.0))),
+        (
+            "deadlift",
+            (("deadlift", "working", 2, 9.0), ("deadlift", "backoff", 4, 7.0)),
+        ),
+        (
+            "full",
+            (
+                ("squat", "working", 2, 8.0),
+                ("bench", "working", 2, 8.0),
+                ("deadlift", "working", 2, 8.0),
+            ),
+        ),
+    ),
+    "deload": (
+        ("squat", (("squat", "working", 5, 6.0),)),
+        ("bench", (("bench", "working", 5, 6.0),)),
+        ("deadlift", (("deadlift", "working", 5, 6.0),)),
+        (
+            "full",
+            (
+                ("squat", "working", 5, 6.0),
+                ("bench", "working", 5, 6.0),
+                ("deadlift", "working", 5, 6.0),
+            ),
+        ),
+    ),
+    "general": (
+        ("squat", (("squat", "working", 5, 7.5), ("squat", "backoff", 8, 6.5))),
+        ("bench", (("bench", "working", 5, 7.5), ("bench", "backoff", 8, 6.5))),
+        (
+            "deadlift",
+            (("deadlift", "working", 5, 7.5), ("deadlift", "backoff", 8, 6.5)),
+        ),
+        (
+            "full",
+            (
+                ("squat", "working", 5, 6.5),
+                ("bench", "working", 5, 6.5),
+                ("deadlift", "working", 5, 6.5),
+            ),
+        ),
+    ),
+}
+
+# Self-authored spacing: one rest day between sessions, fits inside a 7-day
+# week for the maximum 4 sessions (day offsets 0, 2, 4, 6).
+_DAY_OFFSET_STEP: Final = 2
+
+# Self-authored: +0.5 RPE/week keeps the weekly target on the RPE_TO_PCT 0.5
+# grid; capped at 10.0 so no week ever asks for more than a true max effort.
+RPE_WEEKLY_STEP: Final = 0.5
+_MAX_RPE: Final = 10.0
+
+
+@dataclass(frozen=True)
+class PrescribedSet:
+    """One set the engine has fully decided, ready for the route to persist."""
+
+    lift: str
+    set_order: int
+    set_type: str
+    reps: int
+    intensity_type: str
+    intensity: float
+    weight_kg: float
+    weight_mode: str
+
+
+@dataclass(frozen=True)
+class PrescribedSession:
+    """One prescribed training day within a week."""
+
+    day_offset: int
+    session_type: str
+    sets: tuple[PrescribedSet, ...]
+
+
+def _week_rpe(base_rpe: float, week_index: int) -> float:
+    """Apply the uniform weekly RPE progression, capped at 10.0."""
+    return min(base_rpe + RPE_WEEKLY_STEP * (week_index - 1), _MAX_RPE)
+
+
+def lifts_needed(intent: str, days: int) -> frozenset[str]:
+    """Every lift the template requires for `days` sessions of `intent`.
+
+    Lets the route resolve `e1rm_by_lift` before calling `prescribe_week`
+    without reading `WEEK_TEMPLATES` itself (D-5): the template stays owned
+    by the engine.
+    """
+    if intent not in WEEK_TEMPLATES:
+        raise ValueError(f"unknown intent: {intent!r}")
+    templates = WEEK_TEMPLATES[intent]
+    if days < 1 or days > len(templates):
+        raise ValueError(
+            f"days must be between 1 and {len(templates)} for intent {intent!r}, "
+            f"got {days}"
+        )
+    return frozenset(
+        set_spec[0] for _, set_specs in templates[:days] for set_spec in set_specs
+    )
+
+
+def prescribe_week(
+    intent: str,
+    days: int,
+    e1rm_by_lift: Mapping[str, float],
+    week_index: int,
+) -> tuple[PrescribedSession, ...]:
+    """Prescribe one training week: every load/rep/RPE decision happens here.
+
+    Returns every field the persistence layer needs (R18), so the caller does
+    assignment only. Never extrapolates: raises `ValueError` naming the
+    offending input instead (mirrors `load_for`).
+    """
+    if intent not in WEEK_TEMPLATES:
+        raise ValueError(f"unknown intent: {intent!r}")
+    templates = WEEK_TEMPLATES[intent]
+    if days < 1 or days > len(templates):
+        raise ValueError(
+            f"days must be between 1 and {len(templates)} for intent {intent!r}, "
+            f"got {days}"
+        )
+    if week_index < 1:
+        raise ValueError(f"week_index must be at least 1, got {week_index}")
+
+    sessions = []
+    for index, (session_type, set_specs) in enumerate(templates[:days]):
+        sets = []
+        for order, (lift, set_type, reps, base_rpe) in enumerate(set_specs, start=1):
+            one_rm = e1rm_by_lift.get(lift)
+            if one_rm is None:
+                raise ValueError(f"e1rm_by_lift is missing required lift: {lift!r}")
+            rpe = _week_rpe(base_rpe, week_index)
+            weight_kg = load_for(one_rm, reps, rpe)
+            sets.append(
+                PrescribedSet(
+                    lift=lift,
+                    set_order=order,
+                    set_type=set_type,
+                    reps=reps,
+                    intensity_type="RPE",
+                    intensity=rpe,
+                    weight_kg=weight_kg,
+                    weight_mode="fixed",
+                )
+            )
+        sessions.append(
+            PrescribedSession(
+                day_offset=index * _DAY_OFFSET_STEP,
+                session_type=session_type,
+                sets=tuple(sets),
+            )
+        )
+    return tuple(sessions)
+
 
 @dataclass(frozen=True)
 class SessionSummary:
