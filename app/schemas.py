@@ -103,6 +103,39 @@ class UserRead(BaseModel):
     updated_at: datetime
 
 
+class ProfileRead(BaseModel):
+    """The authenticated athlete's mutable training-profile fields.
+
+    Strictly the athlete fields on `User`, not identity (id/email/display_name)
+    or auth/admin fields — those are exposed only via `UserRead` (GET /v1/me).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    discipline: Discipline
+    unit: Unit
+    comp_style: CompStyle
+    equipment_owned: dict[str, bool]
+    training_days_target: int | None
+
+
+class ProfileUpdate(BaseModel):
+    """Payload for PATCH /v1/profile: partial update of athlete fields only.
+
+    `extra="forbid"` is the enforcement point (ADR-015/ADR-007): sending
+    identity or auth fields like id/email/hashed_password/is_admin is a 422,
+    not a route-level check.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    discipline: Discipline | None = None
+    unit: Unit | None = None
+    comp_style: CompStyle | None = None
+    equipment_owned: EquipmentOwned | None = None
+    training_days_target: int | None = None
+
+
 class ExerciseCreate(BaseModel):
     """Payload for POST /v1/exercises (user-created exercises only)."""
 
