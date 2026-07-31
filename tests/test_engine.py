@@ -13,11 +13,13 @@ from app.engine import (
     e1rm_best_of_recent,
     estimate_1rm,
     estimated_rpe,
+    is_hard_set,
     lifts_needed,
     load_for,
     prescribe_week,
     should_deload,
     weekly_volume_status,
+    worst_zone,
 )
 
 FORBIDDEN_IMPORTS = {"fastapi", "httpx", "sqlalchemy", "redis", "app.db", "app.deps"}
@@ -325,6 +327,27 @@ def test_lifts_needed_grows_with_days() -> None:
     """1 day needs only squat; 4 days need all three main lifts."""
     assert lifts_needed("accumulation", 1) == {"squat"}
     assert lifts_needed("accumulation", 4) == {"squat", "bench", "deadlift"}
+
+
+def test_is_hard_set_thresholds() -> None:
+    """RPE >= 7 is hard; RIR <= 3 (its equivalent) is hard; below either is not."""
+    assert is_hard_set("RPE", 7.0) is True
+    assert is_hard_set("RPE", 6.5) is False
+    assert is_hard_set("RIR", 3.0) is True
+    assert is_hard_set("RIR", 4.0) is False
+
+
+def test_is_hard_set_rejects_unknown_intensity_type() -> None:
+    """An unrecognised intensity_type raises rather than guessing."""
+    with pytest.raises(ValueError, match="intensity_type"):
+        is_hard_set("percent", 7.0)
+
+
+def test_worst_zone_picks_most_alarming() -> None:
+    """Ranks below_MEV < MEV_MAV < MAV_MRV < above_MRV."""
+    assert worst_zone(["below_MEV", "above_MRV", "MEV_MAV"]) == "above_MRV"
+    assert worst_zone(["below_MEV"]) == "below_MEV"
+    assert worst_zone([]) == "below_MEV"
 
 
 def test_lifts_needed_rejects_bad_input() -> None:
