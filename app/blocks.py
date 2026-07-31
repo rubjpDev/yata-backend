@@ -1,6 +1,6 @@
 """Training block routes: create block+week1+sessions+sets, and read a block."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Final
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import engine
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, get_today
 from app.models import (
     Block,
     Exercise,
@@ -19,7 +19,7 @@ from app.models import (
     User,
     WeekStatus,
 )
-from app.schemas import BlockCreate, BlockRead, WeekRead
+from app.schemas import BlockCreate, BlockRead, BlockStatusRead, WeekRead
 
 router = APIRouter()
 
@@ -197,3 +197,122 @@ async def get_block(
     weeks = list(weeks_result.scalars().all())
 
     return _block_read(block, weeks)
+
+
+async def _executed_rows(
+    session: AsyncSession, block_id: int
+) -> list[tuple[TrainingSet, Exercise, TrainingSession]]:
+    """Every executed set in the block, joined to its exercise and session."""
+    result = await session.execute(
+        select(TrainingSet, Exercise, TrainingSession)
+        .join(Exercise, TrainingSet.exercise_id == Exercise.id)
+        .join(TrainingSession, TrainingSet.session_id == TrainingSession.id)
+        .join(TrainingWeek, TrainingSession.week_id == TrainingWeek.id)
+        .where(
+            TrainingWeek.block_id == block_id,
+            TrainingSet.completed_at.is_not(None),
+            TrainingSet.executed_weight_kg.is_not(None),
+            TrainingSet.executed_reps.is_not(None),
+        )
+    )
+    return [(s, e, sess) for s, e, sess in result.all()]
+
+
+def _hard_sets_by_muscle(
+    rows: list[tuple[TrainingSet, Exercise, TrainingSession]],
+) -> dict[str, int]:
+    """Count executed hard sets per muscle group (engine.is_hard_set decides)."""
+    counts: dict[str, int] = {}
+    for training_set, exercise, _ in rows:
+        intensity = training_set.executed_intensity
+        if intensity is None or not engine.is_hard_set(
+            training_set.intensity_type.value, intensity
+        ):
+            continue
+        for muscle in exercise.muscle_groups:
+            counts[muscle] = counts.get(muscle, 0) + 1
+    return counts
+
+
+def _deload_history(
+    rows: list[tuple[TrainingSet, Exercise, TrainingSession]],
+    overall_zone: engine.VolumeZone,
+) -> list[engine.SessionSummary]:
+    """One `SessionSummary` per session, keyed by its own best e1RM set.
+
+    Ponytail: a block currently holds a single training week (multi-week
+    progression is Phase 3 / the agent gate), so every session shares the
+    same `overall_zone` rather than a per-week breakdown.
+    """
+    by_session: dict[int, list[TrainingSet]] = {}
+    session_dates: dict[int, date] = {}
+    for training_set, _, training_session in rows:
+        by_session.setdefault(training_session.id, []).append(training_set)
+        session_dates[training_session.id] = training_session.date
+
+    history = []
+    for session_id, sets in by_session.items():
+        top_set = max(
+            sets,
+            key=lambda s: engine.estimate_1rm(
+                s.executed_weight_kg or 0.0, s.executed_reps or 1
+            ),
+        )
+        assert top_set.executed_weight_kg is not None
+        assert top_set.executed_reps is not None
+        assert top_set.executed_intensity is not None
+        e1rm_kg = engine.estimate_1rm(top_set.executed_weight_kg, top_set.executed_reps)
+        top_rpe = (
+            top_set.executed_intensity
+            if top_set.intensity_type.value == "RPE"
+            else 10.0 - top_set.executed_intensity
+        )
+        history.append(
+            engine.SessionSummary(
+                session_date=session_dates[session_id],
+                e1rm_kg=e1rm_kg,
+                top_set_weight_kg=top_set.executed_weight_kg,
+                top_set_reps=top_set.executed_reps,
+                top_set_rpe=top_rpe,
+                week_volume_zone=overall_zone,
+            )
+        )
+    return history
+
+
+@router.get("/blocks/{block_id}/status", response_model=BlockStatusRead)
+async def get_block_status(
+    block_id: int,
+    now: date = Depends(get_today),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> BlockStatusRead:
+    """Engine-backed block status: volume zones + deload signal over executed sets.
+
+    Informative only (no re-prescription): every e1RM comes from
+    `engine.estimate_1rm`, every zone from `engine.weekly_volume_status`, and
+    the deload flag/reasons from `engine.should_deload`. `now` is injected
+    from the same date dependency as `/v1/sessions/today`.
+    """
+    block_result = await session.execute(
+        select(Block).where(Block.id == block_id, Block.athlete_id == user.id)
+    )
+    block = block_result.scalar_one_or_none()
+    if block is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Block not found"
+        )
+
+    rows = await _executed_rows(session, block_id)
+    hard_sets = _hard_sets_by_muscle(rows)
+    zones = engine.weekly_volume_status(hard_sets) if hard_sets else {}
+    overall_zone = engine.worst_zone(zones.values()) if zones else "below_MEV"
+
+    history = _deload_history(rows, overall_zone)
+    deload, reasons = engine.should_deload(history, now) if history else (False, [])
+
+    return BlockStatusRead(
+        zones={muscle: str(zone) for muscle, zone in zones.items()},
+        deload=deload,
+        reasons=reasons,
+    )

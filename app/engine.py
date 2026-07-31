@@ -1,6 +1,6 @@
 """Deterministic training engine: pure math, no I/O"""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Final, Literal
@@ -356,6 +356,37 @@ def weekly_volume_status(
             raise ValueError(f"negative hard sets for {muscle!r}: {hard_sets}")
         statuses[muscle] = _zone_for(hard_sets, landmarks)
     return statuses
+
+
+# Self-authored: a work set counts as "hard" at RPE >= 7 (~3 reps in reserve
+# or closer); RIR is converted via RIR = 10 - RPE, the same mapping used to
+# derive RPE_TO_PCT.
+HARD_SET_MIN_RPE: Final = 7.0
+
+
+def is_hard_set(intensity_type: str, intensity: float) -> bool:
+    """Whether an executed set counts as a weekly-volume "hard set"."""
+    if intensity_type == "RPE":
+        return intensity >= HARD_SET_MIN_RPE
+    if intensity_type == "RIR":
+        return intensity <= 10.0 - HARD_SET_MIN_RPE
+    raise ValueError(f"unknown intensity_type: {intensity_type!r}")
+
+
+_ZONE_SEVERITY: Final[dict[VolumeZone, int]] = {
+    "below_MEV": 0,
+    "MEV_MAV": 1,
+    "MAV_MRV": 2,
+    "above_MRV": 3,
+}
+
+
+def worst_zone(zones: Iterable[VolumeZone]) -> VolumeZone:
+    """The most alarming zone among a set of per-muscle-group classifications."""
+    zones = list(zones)
+    if not zones:
+        return "below_MEV"
+    return max(zones, key=lambda zone: _ZONE_SEVERITY[zone])
 
 
 def should_deload(

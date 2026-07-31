@@ -1,5 +1,7 @@
 """Shared FastAPI dependencies."""
 
+from datetime import date
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -12,6 +14,15 @@ from app.security import decode_token
 _bearer_scheme = HTTPBearer()
 
 _CREDENTIALS_ERROR_DETAIL = "Could not validate credentials"
+
+
+def get_today() -> date:
+    """Today's date, injected so routes never call `date.today()` directly.
+
+    Overridable in tests via `app.dependency_overrides[get_today]`; also
+    supplies `now` to the block-status route.
+    """
+    return date.today()
 
 
 async def get_current_user(

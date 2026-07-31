@@ -1,6 +1,7 @@
 """Shared pytest fixtures: async SQLite test DB and an httpx test client."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Generator
+from datetime import date
 
 import pytest
 import pytest_asyncio
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
 # (users, exercises, bodyweight_logs all register here).
 import app.models  # noqa: F401
 from app.db import Base, get_db
+from app.deps import get_today
 from app.main import app
 
 
@@ -47,6 +49,17 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         yield ac
 
     app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture
+def set_today() -> Generator[Callable[[date], None]]:
+    """Override the injectable `get_today` dependency for a test's duration."""
+
+    def _set(value: date) -> None:
+        app.dependency_overrides[get_today] = lambda: value
+
+    yield _set
+    app.dependency_overrides.pop(get_today, None)
 
 
 @pytest.fixture
