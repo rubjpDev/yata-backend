@@ -14,7 +14,20 @@ from pydantic import (
     field_validator,
 )
 
-from app.models import CompStyle, Discipline, ExerciseCategory, Unit
+from app.models import (
+    BlockIntent,
+    BlockStatus,
+    CompStyle,
+    Discipline,
+    ExerciseCategory,
+    IntensityType,
+    SessionStatus,
+    SessionType,
+    SetType,
+    Unit,
+    WeekStatus,
+    WeightMode,
+)
 
 PasswordStr = Annotated[
     str,
@@ -144,3 +157,102 @@ class BodyweightRead(BaseModel):
     weight_kg: float
     created_at: datetime
     updated_at: datetime
+
+
+class BlockCreate(BaseModel):
+    """Payload for POST /v1/blocks: creates the block and its first week."""
+
+    intent: BlockIntent
+    planned_weeks: int = Field(ge=1)
+    start_date: Date
+    days: int = Field(ge=1, le=4)
+    seed_1rm_kg: dict[str, float] = Field(default_factory=dict)
+
+
+class WeekRead(BaseModel):
+    """Public representation of a training week."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    block_id: int
+    week_index: int
+    days_planned: int
+    status: WeekStatus
+    created_at: datetime
+
+
+class BlockRead(BaseModel):
+    """Public representation of a block, with its training weeks."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    athlete_id: int
+    intent: BlockIntent
+    planned_weeks: int
+    start_date: Date
+    status: BlockStatus
+    created_at: datetime
+    weeks: list[WeekRead] = Field(default_factory=list)
+
+
+class SetExecutionUpdate(BaseModel):
+    """Payload for PATCH /v1/sets/{id}/execution.
+
+    Declares ONLY executed_* + equipment_config + completed_at and forbids
+    any other field (`extra="forbid"`): sending prescribed_weight_kg,
+    set_order, session_id or status is a 422, enforced here rather than in a
+    service layer (ADR-015/ADR-007).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    executed_weight_kg: float | None = Field(default=None, gt=0.0)
+    executed_reps: int | None = Field(default=None, ge=1)
+    executed_intensity: float | None = Field(default=None, ge=0.0)
+    equipment_config: dict[str, object] | None = None
+    completed_at: datetime | None = None
+
+
+class SetRead(BaseModel):
+    """Prescribed-vs-executed view of one set."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    exercise_id: int
+    set_order: int
+    set_type: SetType
+    intensity_type: IntensityType
+    weight_mode: WeightMode
+    equipment_config: dict[str, object]
+    prescribed_weight_kg: float | None
+    prescribed_reps: int | None
+    prescribed_intensity: float | None
+    executed_weight_kg: float | None
+    executed_reps: int | None
+    executed_intensity: float | None
+    completed_at: datetime | None
+
+
+class SessionRead(BaseModel):
+    """A training session with its prescribed-vs-executed sets."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    week_id: int
+    date: Date
+    session_type: SessionType
+    status: SessionStatus
+    created_at: datetime
+    sets: list[SetRead] = Field(default_factory=list)
+
+
+class BlockStatusRead(BaseModel):
+    """Engine-derived status of a block: per-muscle volume zones + deload signal."""
+
+    zones: dict[str, str]
+    deload: bool
+    reasons: list[str]
