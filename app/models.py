@@ -4,6 +4,7 @@ from datetime import date, datetime
 from enum import StrEnum
 
 import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -319,4 +321,29 @@ class BodyweightLog(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class KnowledgeChunk(Base):
+    """One embedded slice of the coaching corpus, retrieved by cosine distance."""
+
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    discipline: Mapped[Discipline] = mapped_column(
+        Enum(Discipline, name="discipline"),
+        nullable=False,
+        server_default=Discipline.powerlifting.value,
+    )
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    source_note: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    # `Vector` has no SQLite compilation: declared bare it takes the whole
+    # `create_all` test suite down. On SQLite this is an unused BLOB column.
+    embedding: Mapped[list[float]] = mapped_column(
+        sa.LargeBinary().with_variant(Vector(384), "postgresql"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
