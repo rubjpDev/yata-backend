@@ -1,6 +1,7 @@
 """Shared FastAPI dependencies."""
 
 from datetime import date
+from functools import lru_cache
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
+from app.embeddings import FastEmbedClient
 from app.models import User
 from app.security import decode_token
 
@@ -41,3 +43,13 @@ async def get_current_user(
         )
 
     return user
+
+
+@lru_cache(maxsize=1)
+def get_embedding_client() -> FastEmbedClient:
+    """The process-wide embedding client, built on first call, never at import.
+
+    Cached because building it downloads and loads a ~130 MB model; injected
+    explicitly (never constructed inside `app.rag`) so tests pass a fake instead.
+    """
+    return FastEmbedClient()
