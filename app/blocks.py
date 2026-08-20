@@ -1,7 +1,6 @@
 """Training block routes: create block+week1+sessions+sets, and read a block."""
 
 from datetime import date, timedelta
-from typing import Final
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import engine
 from app.db import get_db
 from app.deps import get_current_user, get_today
+from app.history import deload_history, executed_rows, hard_sets_by_muscle, resolve_e1rm
 from app.models import (
     Block,
     Exercise,
@@ -38,13 +38,6 @@ def _block_read(block: Block, weeks: list[TrainingWeek]) -> BlockRead:
     )
 
 
-# Data-sufficiency policy (not a training number): with fewer than this many
-# executed working sets for a lift we trust the athlete's seed over a thin
-# history. yata-0010 ships the route that fills executed_*; until then this
-# branch is always the seed.
-MIN_TOP_SETS_FOR_E1RM: Final = 3
-
-
 async def _system_exercise_ids(session: AsyncSession) -> dict[str, int]:
     """Map each main-lift category to its system exercise id (created_by NULL)."""
     result = await session.execute(
@@ -56,26 +49,15 @@ async def _system_exercise_ids(session: AsyncSession) -> dict[str, int]:
 async def _e1rm_for_lift(
     session: AsyncSession, athlete_id: int, lift: str, seed_1rm_kg: dict[str, float]
 ) -> float:
-    """Resolve a lift's e1RM from recent executed history, else the seed (D-7)."""
-    top_sets = await session.execute(
-        select(TrainingSet.executed_weight_kg, TrainingSet.executed_reps)
-        .join(TrainingSession, TrainingSet.session_id == TrainingSession.id)
-        .join(Exercise, TrainingSet.exercise_id == Exercise.id)
-        .where(
-            TrainingSet.athlete_id == athlete_id,
-            TrainingSet.set_type == "working",
-            TrainingSet.completed_at.is_not(None),
-            TrainingSet.executed_weight_kg.is_not(None),
-            TrainingSet.executed_reps.is_not(None),
-            Exercise.category == lift,
-        )
-        .order_by(TrainingSet.completed_at.desc())
-        .limit(MIN_TOP_SETS_FOR_E1RM)
-    )
-    rows = top_sets.all()
-    if len(rows) == MIN_TOP_SETS_FOR_E1RM:
-        pairs = [(w, r) for w, r in rows if w is not None and r is not None]
-        return engine.e1rm_best_of_recent(pairs)
+    """Resolve a lift's e1RM from recent executed history, else the seed (D-7).
+
+    Wraps `app.history.resolve_e1rm` (which returns `None` instead of raising,
+    because a graph node must not raise HTTP errors) to keep this route's own
+    422-with-seed behaviour.
+    """
+    from_history: float | None = await resolve_e1rm(session, athlete_id, lift)
+    if from_history is not None:
+        return from_history
     if lift in seed_1rm_kg:
         return seed_1rm_kg[lift]
     raise HTTPException(
@@ -199,87 +181,6 @@ async def get_block(
     return _block_read(block, weeks)
 
 
-async def _executed_rows(
-    session: AsyncSession, block_id: int
-) -> list[tuple[TrainingSet, Exercise, TrainingSession]]:
-    """Every executed set in the block, joined to its exercise and session."""
-    result = await session.execute(
-        select(TrainingSet, Exercise, TrainingSession)
-        .join(Exercise, TrainingSet.exercise_id == Exercise.id)
-        .join(TrainingSession, TrainingSet.session_id == TrainingSession.id)
-        .join(TrainingWeek, TrainingSession.week_id == TrainingWeek.id)
-        .where(
-            TrainingWeek.block_id == block_id,
-            TrainingSet.completed_at.is_not(None),
-            TrainingSet.executed_weight_kg.is_not(None),
-            TrainingSet.executed_reps.is_not(None),
-        )
-    )
-    return [(s, e, sess) for s, e, sess in result.all()]
-
-
-def _hard_sets_by_muscle(
-    rows: list[tuple[TrainingSet, Exercise, TrainingSession]],
-) -> dict[str, int]:
-    """Count executed hard sets per muscle group (engine.is_hard_set decides)."""
-    counts: dict[str, int] = {}
-    for training_set, exercise, _ in rows:
-        intensity = training_set.executed_intensity
-        if intensity is None or not engine.is_hard_set(
-            training_set.intensity_type.value, intensity
-        ):
-            continue
-        for muscle in exercise.muscle_groups:
-            counts[muscle] = counts.get(muscle, 0) + 1
-    return counts
-
-
-def _deload_history(
-    rows: list[tuple[TrainingSet, Exercise, TrainingSession]],
-    overall_zone: engine.VolumeZone,
-) -> list[engine.SessionSummary]:
-    """One `SessionSummary` per session, keyed by its own best e1RM set.
-
-    Ponytail: a block currently holds a single training week (multi-week
-    progression is Phase 3 / the agent gate), so every session shares the
-    same `overall_zone` rather than a per-week breakdown.
-    """
-    by_session: dict[int, list[TrainingSet]] = {}
-    session_dates: dict[int, date] = {}
-    for training_set, _, training_session in rows:
-        by_session.setdefault(training_session.id, []).append(training_set)
-        session_dates[training_session.id] = training_session.date
-
-    history = []
-    for session_id, sets in by_session.items():
-        top_set = max(
-            sets,
-            key=lambda s: engine.estimate_1rm(
-                s.executed_weight_kg or 0.0, s.executed_reps or 1
-            ),
-        )
-        assert top_set.executed_weight_kg is not None
-        assert top_set.executed_reps is not None
-        assert top_set.executed_intensity is not None
-        e1rm_kg = engine.estimate_1rm(top_set.executed_weight_kg, top_set.executed_reps)
-        top_rpe = (
-            top_set.executed_intensity
-            if top_set.intensity_type.value == "RPE"
-            else 10.0 - top_set.executed_intensity
-        )
-        history.append(
-            engine.SessionSummary(
-                session_date=session_dates[session_id],
-                e1rm_kg=e1rm_kg,
-                top_set_weight_kg=top_set.executed_weight_kg,
-                top_set_reps=top_set.executed_reps,
-                top_set_rpe=top_rpe,
-                week_volume_zone=overall_zone,
-            )
-        )
-    return history
-
-
 @router.get("/blocks/{block_id}/status", response_model=BlockStatusRead)
 async def get_block_status(
     block_id: int,
@@ -303,12 +204,12 @@ async def get_block_status(
             status_code=status.HTTP_404_NOT_FOUND, detail="Block not found"
         )
 
-    rows = await _executed_rows(session, block_id)
-    hard_sets = _hard_sets_by_muscle(rows)
+    rows = await executed_rows(session, block_id)
+    hard_sets = hard_sets_by_muscle(rows)
     zones = engine.weekly_volume_status(hard_sets) if hard_sets else {}
     overall_zone = engine.worst_zone(zones.values()) if zones else "below_MEV"
 
-    history = _deload_history(rows, overall_zone)
+    history = deload_history(rows, overall_zone)
     deload, reasons = engine.should_deload(history, now) if history else (False, [])
 
     return BlockStatusRead(
