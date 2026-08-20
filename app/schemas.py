@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from app.models import (
+    AgentRunStatus,
     BlockIntent,
     BlockStatus,
     CompStyle,
@@ -289,3 +290,87 @@ class BlockStatusRead(BaseModel):
     zones: dict[str, str]
     deload: bool
     reasons: list[str]
+
+
+class ProposedSession(BaseModel):
+    """One session's worth of agent decision: which owned gear is used.
+
+    Carries no float, weight, percentage, RPE or RIR of any kind (R29): every
+    kilo, rep and volume figure comes from `engine.prescribe_week`, not from
+    the LLM. `EquipmentOwned` already forbids unknown gear keys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    equipment_config: EquipmentOwned = EquipmentOwned()
+
+
+class WeekProposal(BaseModel):
+    """The agent's entire decision surface for one proposed week (D-4).
+
+    `app.engine.prescribe_week` already owns every set-by-set prescription
+    detail, all read out of `WEEK_TEMPLATES`, and `app/engine.py` is not
+    modified by this feature. What is left for the agent to decide is
+    `intent`, `days`, per-session `equipment_config` and the `rationale` —
+    nothing shaped like a quantity. `extra="forbid"` is the wall: whatever
+    else the LLM says is discarded before it can reach the database.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: BlockIntent
+    days: int = Field(ge=1, le=4)
+    sessions: list[ProposedSession]
+    rationale: str
+
+
+class ProposedWeekRead(BaseModel):
+    """A proposed (or just-activated) training week, with its sessions."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    week_index: int
+    days_planned: int
+    status: WeekStatus
+    created_at: datetime
+    sessions: list[SessionRead] = Field(default_factory=list)
+
+
+class CoachRunCreate(BaseModel):
+    """Payload for POST /v1/coach/runs: propose the next week of a block."""
+
+    block_id: int
+
+
+class CoachEditRequest(BaseModel):
+    """Payload for POST /v1/coach/runs/{id}/edit: the athlete's feedback."""
+
+    feedback: str = Field(min_length=1)
+
+
+class CoachRunRead(BaseModel):
+    """Public representation of one coach-graph planning cycle and its gate.
+
+    No `expires_at`: R0-C ships no expiry, only `created_at` visibility (R39).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    block_id: int
+    status: AgentRunStatus
+    model: str
+    prompt_version: str
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    latency_ms: int | None
+    chunks_retrieved: int
+    attempts: int
+    validation_verdict: str
+    validation_errors: list[str]
+    proposal: WeekProposal | None
+    error_detail: str | None
+    created_at: datetime
+    updated_at: datetime
+    week: ProposedWeekRead | None = None

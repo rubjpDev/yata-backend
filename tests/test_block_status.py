@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Exercise, TrainingSession, TrainingSet
+from tests._catalogue import system_exercises
 
 _SEED_1RM = {"squat": 150.0, "bench": 100.0, "deadlift": 180.0}
 _BLOCK_PAYLOAD = {
@@ -49,6 +50,19 @@ async def _seed_system_exercises(db_session: AsyncSession) -> None:
                 name="Deadlift", category="deadlift", muscle_groups=["hamstrings"]
             ),
         ]
+    )
+    await db_session.commit()
+
+
+async def _seed_full_catalogue(db_session: AsyncSession) -> None:
+    """Insert every system exercise exactly as migration 20260618_0003 seeds it.
+
+    Unlike `_seed_system_exercises` (single-muscle fixtures), this exercises
+    the real multi-muscle rows, in particular Squat's {quads,glutes,core}.
+    """
+    db_session.add_all(
+        Exercise(name=name, category=category, muscle_groups=groups)
+        for name, category, groups in system_exercises()
     )
     await db_session.commit()
 
@@ -212,3 +226,44 @@ async def test_status_without_token_returns_401(client: AsyncClient) -> None:
     """GET .../status without a token returns 401."""
     response = await client.get("/v1/blocks/1/status")
     assert response.status_code == 401
+
+
+async def test_status_multi_muscle_exercise_from_real_catalogue_returns_200(
+    client: AsyncClient,
+    register_payload: dict[str, str],
+    db_session: AsyncSession,
+    set_today: Callable[[date], None],
+) -> None:
+    """A hard set of the REAL seeded Squat (quads+glutes+core) must not 500.
+
+    yata-0015 regression: `VOLUME_LANDMARKS` used to lack a 'core' entry, so
+    this raised ValueError -> 500 as soon as the catalogue's actual Squat row
+    (not a single-muscle test fixture) had an executed hard set.
+    """
+    await _seed_full_catalogue(db_session)
+    headers = await _auth_headers(client, register_payload)
+    block_id = await _create_block(client, headers)
+    set_today(date(2026, 8, 10))
+    set_id = await _first_set_id(db_session, date(2026, 8, 3))
+
+    patch = await client.patch(
+        f"/v1/sets/{set_id}/execution",
+        headers=headers,
+        json={
+            "executed_weight_kg": 100.0,
+            "executed_reps": 5,
+            "executed_intensity": 7.0,
+            "completed_at": "2026-08-03T10:00:00Z",
+        },
+    )
+    assert patch.status_code == 200
+
+    response = await client.get(f"/v1/blocks/{block_id}/status", headers=headers)
+
+    assert response.status_code == 200
+    zones = response.json()["zones"]
+    squat_muscle_groups = next(
+        groups for name, _, groups in system_exercises() if name == "Squat"
+    )
+    for muscle in squat_muscle_groups:
+        assert muscle in zones

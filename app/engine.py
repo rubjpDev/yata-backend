@@ -37,6 +37,7 @@ VOLUME_LANDMARKS: Final[dict[str, tuple[int, int, int]]] = {
     "shoulders": (8, 14, 20),
     "triceps": (6, 10, 16),
     "biceps": (6, 10, 16),
+    "core": (6, 10, 14),
 }
 
 # Self-authored deload thresholds: conservative starting points to tune
