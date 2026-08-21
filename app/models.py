@@ -4,6 +4,7 @@ from datetime import date, datetime
 from enum import StrEnum
 
 import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -136,6 +138,22 @@ class WeightMode(StrEnum):
     free = "free"
 
 
+class AgentRunStatus(StrEnum):
+    """Lifecycle status of one coach-graph planning cycle.
+
+    Doubles as the gate outcome once resolved (`accepted`/`rejected`): a
+    second `gate_outcome` column would be NULL until resolution and would
+    need to be kept in sync with this one. No `expired` value — R0-C ships
+    no expiry.
+    """
+
+    running = "running"
+    awaiting_gate = "awaiting_gate"
+    accepted = "accepted"
+    rejected = "rejected"
+    failed = "failed"
+
+
 class User(Base):
     """A registered athlete account: identity + athlete fields, single table."""
 
@@ -210,6 +228,12 @@ class TrainingWeek(Base):
     days_planned: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[WeekStatus] = mapped_column(
         Enum(WeekStatus, name="week_status"), nullable=False
+    )
+    # Nullable: weeks created by `POST /v1/blocks` (yata-0009) have no
+    # proposal behind them. Set by the coach graph when a week is born
+    # proposed (ADR-010).
+    proposal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_runs.id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -319,4 +343,78 @@ class BodyweightLog(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class AgentRun(Base):
+    """One coach-graph planning cycle: a proposal, its gate, and its outcome.
+
+    LangGraph owns its own `checkpoint*` tables (via `AsyncPostgresSaver.setup()`,
+    scripts/setup_checkpointer.py) — this table only records what a reviewer or
+    the athlete needs to see: who ran it, what it cost, how it went. `thread_id`
+    is the join key to the checkpoint store, kept unique because one thread is
+    one planning cycle.
+    """
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    athlete_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    block_id: Mapped[int] = mapped_column(ForeignKey("blocks.id"), nullable=False)
+    thread_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    status: Mapped[AgentRunStatus] = mapped_column(
+        Enum(AgentRunStatus, name="agent_run_status"), nullable=False
+    )
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunks_retrieved: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    validation_verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    validation_errors: Mapped[list[str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
+    )
+    proposal: Mapped[dict[str, object] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class KnowledgeChunk(Base):
+    """One embedded slice of the coaching corpus, retrieved by cosine distance."""
+
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    discipline: Mapped[Discipline] = mapped_column(
+        Enum(Discipline, name="discipline"),
+        nullable=False,
+        server_default=Discipline.powerlifting.value,
+    )
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    source_note: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    # `Vector` has no SQLite compilation: declared bare it takes the whole
+    # `create_all` test suite down. On SQLite this is an unused BLOB column.
+    embedding: Mapped[list[float]] = mapped_column(
+        sa.LargeBinary().with_variant(Vector(384), "postgresql"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -123,6 +123,33 @@ async def test_create_block_missing_1rm_returns_422_and_creates_nothing(
     assert result.scalars().first() is None
 
 
+async def test_create_block_missing_system_exercise_returns_422_and_creates_nothing(
+    client: AsyncClient, register_payload: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A needed lift with no system exercise (created_by NULL) is rejected first.
+
+    Only squat/bench are seeded, so deadlift is missing; this must fail before
+    any e1RM resolution or persistence (D9 debt: the missing_exercise branch
+    in `create_block` had no dedicated test).
+    """
+    db_session.add_all(
+        [
+            Exercise(name="Squat", category="squat", muscle_groups=["quads"]),
+            Exercise(name="Bench Press", category="bench", muscle_groups=["chest"]),
+        ]
+    )
+    await db_session.commit()
+    headers = await _auth_headers(client, register_payload)
+
+    response = await client.post("/v1/blocks", headers=headers, json=_BLOCK_PAYLOAD)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "no system exercise for lift 'deadlift'"
+
+    result = await db_session.execute(select(TrainingSet))
+    assert result.scalars().first() is None
+
+
 async def test_get_own_block_returns_200(
     client: AsyncClient, register_payload: dict[str, str], db_session: AsyncSession
 ) -> None:

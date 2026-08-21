@@ -15,3 +15,9 @@ variable "github_repo" {
   type        = string
   default     = "rubjpDev/yata-backend"
 }
+
+variable "llm_model" {
+  description = "Bedrock model id the EC2 role is scoped to invoke. Tracks app/config.py::Settings.llm_model."
+  type        = string
+  default     = "qwen.qwen3-next-80b-a3b"
+}

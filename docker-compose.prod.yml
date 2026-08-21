@@ -18,23 +18,31 @@ services:
     image: ${ECR_IMAGE}
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql+asyncpg://yata:yata@db:5432/yata"
-      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgresql+asyncpg://yata:${POSTGRES_PASSWORD}@db:5432/yata"
       SECRET_KEY: ${SECRET_KEY}
       ENVIRONMENT: "production"
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.6-pg16-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_USER: yata
-      POSTGRES_PASSWORD: yata
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: yata
+    ports:
+      # Loopback only (R35): reachable from the box itself and from an
+      # IAM-authenticated SSM tunnel, never from the internet. The security
+      # group is untouched and 5432 stays closed.
+      - "127.0.0.1:5432:5432"
     volumes:
       - /data/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -43,16 +51,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
 
 volumes:
   caddy_data:
