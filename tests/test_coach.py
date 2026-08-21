@@ -819,6 +819,45 @@ async def test_edit_replaces_the_proposal_and_stays_awaiting_gate(
     assert len(list(week_count.scalars().all())) == 1
 
 
+@pytest.mark.parametrize(
+    "route_suffix,payload",
+    [
+        ("accept", None),
+        ("edit", {"feedback": "please run 2 days instead"}),
+        ("reject", None),
+    ],
+)
+async def test_gate_route_other_athletes_run_returns_404_without_mutating(
+    client: AsyncClient,
+    register_payload: dict[str, str],
+    db_session: AsyncSession,
+    route_suffix: str,
+    payload: dict[str, str] | None,
+) -> None:
+    """A stranger's accept/edit/reject 404s and leaves the week untouched.
+
+    `_owned_run` (ADR-007) must reject before the graph resumes: a route that
+    404s but still resolves the gate would be worse than one that 403s.
+    """
+    headers, block_id, _ = await _prepared_athlete(client, db_session, register_payload)
+    run = await _propose(client, headers, block_id)
+    proposed_week_id = run["week"]["id"]
+    other_headers = await _auth_headers(client, _second_user_payload())
+
+    response = await client.post(
+        f"/v1/coach/runs/{run['id']}/{route_suffix}",
+        headers=other_headers,
+        json=payload if payload is not None else {},
+    )
+
+    assert response.status_code == 404
+
+    week = await db_session.get(TrainingWeek, proposed_week_id)
+    await db_session.refresh(week)
+    assert week.status == "proposed"
+    assert week.proposal_id is None
+
+
 async def test_accept_on_a_run_not_awaiting_gate_returns_409(
     client: AsyncClient, register_payload: dict[str, str], db_session: AsyncSession
 ) -> None:

@@ -21,10 +21,22 @@ jobs:
       - name: Lint + test
         run: ./init.sh
 
+      # yata-0019: the account id is a GitHub secret, never hardcoded (this
+      # repo is public). Failing fast here beats letting
+      # configure-aws-credentials try to assume a malformed ARN like
+      # `arn:aws:iam:::role/yata-deploy` with no useful error.
+      - name: Check AWS_ACCOUNT_ID secret is set
+        run: |
+          if [ -z "${{ secrets.AWS_ACCOUNT_ID }}" ]; then
+            echo "AWS_ACCOUNT_ID secret is not set. Create it in the repo settings" \
+                 "(Settings > Secrets and variables > Actions) before pushing to main." >&2
+            exit 1
+          fi
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/yata-deploy
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/yata-deploy
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
@@ -40,8 +52,70 @@ jobs:
 
       - name: Deploy via SSM
         run: |
-          aws ssm send-command \
+          set -euo pipefail
+
+          # D-1/R7: the ONLY mechanism that puts these three files on the box.
+          # Base64-encoded from this checkout (the exact commit being
+          # deployed) and delivered inside the send-command payload itself —
+          # no other delivery path exists anywhere in this repo (R8's proof).
+          COMPOSE_B64="$(base64 -w0 docker-compose.prod.yml)"
+          CADDYFILE_B64="$(base64 -w0 infra/Caddyfile)"
+          DEPLOY_SCRIPT_B64="$(base64 -w0 infra/deploy_box.sh)"
+
+          # Built with `jq -n --arg`, never by shell-quoting a string into
+          # `--parameters`, because that quoting is exactly where this kind
+          # of step usually breaks (D-1).
+          PARAMETERS_JSON="$(jq -n \
+            --arg compose "$COMPOSE_B64" \
+            --arg caddyfile "$CADDYFILE_B64" \
+            --arg script "$DEPLOY_SCRIPT_B64" \
+            '{commands: [
+              "set -euo pipefail",
+              "install -d /opt/yata/infra",
+              ("echo " + $compose + " | base64 -d > /opt/yata/docker-compose.prod.yml"),
+              ("echo " + $caddyfile + " | base64 -d > /opt/yata/infra/Caddyfile"),
+              ("echo " + $script + " | base64 -d > /opt/yata/deploy_box.sh"),
+              "chmod +x /opt/yata/deploy_box.sh",
+              "cd /opt/yata && ./deploy_box.sh"
+            ]}')"
+
+          COMMAND_ID="$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --targets "Key=tag:Name,Values=yata-api" \
-            --parameters 'commands=["cd /opt/yata && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"]' \
-            --region "$AWS_REGION"
+            --parameters "$PARAMETERS_JSON" \
+            --region "$AWS_REGION" \
+            --query "Command.CommandId" --output text)"
+          echo "SSM command id: $COMMAND_ID"
+
+          # R21/R70: send-command returns as soon as AWS accepts it, not when
+          # the box finishes — so this polls until the command leaves
+          # Pending/InProgress, prints the box's own stdout+stderr into the
+          # job log, and fails the job on anything but Success.
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=yata-api" \
+            --query "Reservations[].Instances[].InstanceId" --output text \
+            --region "$AWS_REGION")"
+
+          STATUS="Pending"
+          for _ in $(seq 1 60); do
+            STATUS="$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+              --region "$AWS_REGION" --query "Status" --output text 2>/dev/null || echo Pending)"
+            case "$STATUS" in
+              Pending|InProgress|Delayed) sleep 5 ;;
+              *) break ;;
+            esac
+          done
+
+          echo "== box stdout =="
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --region "$AWS_REGION" --query "StandardOutputContent" --output text
+          echo "== box stderr =="
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --region "$AWS_REGION" --query "StandardErrorContent" --output text
+
+          echo "Final status: $STATUS"
+          if [ "$STATUS" != "Success" ]; then
+            echo "deploy failed on the box: status=$STATUS" >&2
+            exit 1
+          fi
