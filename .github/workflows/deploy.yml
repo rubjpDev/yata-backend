@@ -49,6 +49,18 @@ jobs:
             exit 1
           fi
 
+      # yata-0019: the account id is a GitHub secret, never hardcoded (this
+      # repo is public). Failing fast here beats letting
+      # configure-aws-credentials try to assume a malformed ARN like
+      # `arn:aws:iam:::role/yata-deploy` with no useful error.
+      - name: Check AWS_ACCOUNT_ID secret is set
+        run: |
+          if [ -z "${{ secrets.AWS_ACCOUNT_ID }}" ]; then
+            echo "AWS_ACCOUNT_ID secret is not set. Create it in the repo settings" \
+                 "(Settings > Secrets and variables > Actions) before pushing to main." >&2
+            exit 1
+          fi
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
