@@ -66,20 +66,47 @@ locals {
     #    The root device is excluded; whatever unmounted, unpartitioned block
     #    device remains is the data volume. Zero or more than one candidate is
     #    a hard failure, logged in full to /var/log/cloud-init-output.log.
+    #    The EBS attachment can land after this script starts (it is a
+    #    separate Terraform resource applied in parallel with the instance
+    #    boot), so discovery is retried for up to 120s before giving up.
     ROOT_DEVICE="$(lsblk -dpno PKNAME "$(findmnt -no SOURCE /)" 2>/dev/null || true)"
-    mapfile -t CANDIDATES < <(lsblk -dpno NAME,MOUNTPOINT,TYPE | awk '$3=="disk" && $2=="" {print $1}')
+    RETRY_TIMEOUT=120
+    RETRY_INTERVAL=5
+    ELAPSED=0
     FILTERED=()
-    for candidate in "$${CANDIDATES[@]}"; do
-      if [ -n "$ROOT_DEVICE" ] && [ "$candidate" = "$ROOT_DEVICE" ]; then
-        continue
+    while :; do
+      # `lsblk -dpno NAME,MOUNTPOINT,TYPE` collapses an empty MOUNTPOINT
+      # column, shifting TYPE into $2 and breaking positional parsing for the
+      # exact case this is meant to match (unmounted disks). Pairs mode
+      # (`-P`) quotes every field explicitly, so an empty MOUNTPOINT="" stays
+      # unambiguous.
+      CANDIDATES=()
+      while IFS= read -r line; do
+        NAME="" TYPE="" MOUNTPOINT=""
+        eval "$line"
+        if [ "$TYPE" = "disk" ] && [ -z "$MOUNTPOINT" ]; then
+          CANDIDATES+=("$NAME")
+        fi
+      done < <(lsblk -dpnP -o NAME,TYPE,MOUNTPOINT)
+      FILTERED=()
+      for candidate in "$${CANDIDATES[@]}"; do
+        if [ -n "$ROOT_DEVICE" ] && [ "$candidate" = "$ROOT_DEVICE" ]; then
+          continue
+        fi
+        FILTERED+=("$candidate")
+      done
+      if [ "$${#FILTERED[@]}" -eq 1 ]; then
+        break
       fi
-      FILTERED+=("$candidate")
+      if [ "$ELAPSED" -ge "$RETRY_TIMEOUT" ]; then
+        echo "FATAL: expected exactly one unmounted, unpartitioned, non-root block device; found $${#FILTERED[@]}:" >&2
+        lsblk -dpno NAME,MOUNTPOINT,TYPE,PKNAME >&2
+        exit 1
+      fi
+      echo "Waiting for data volume to attach ($${ELAPSED}s/$${RETRY_TIMEOUT}s elapsed, found $${#FILTERED[@]} candidate(s))..."
+      sleep "$RETRY_INTERVAL"
+      ELAPSED=$((ELAPSED + RETRY_INTERVAL))
     done
-    if [ "$${#FILTERED[@]}" -ne 1 ]; then
-      echo "FATAL: expected exactly one unmounted, unpartitioned, non-root block device; found $${#FILTERED[@]}:" >&2
-      lsblk -dpno NAME,MOUNTPOINT,TYPE,PKNAME >&2
-      exit 1
-    fi
     DEVICE="$${FILTERED[0]}"
 
     # 3) Mount it without reformatting if it already carries a filesystem

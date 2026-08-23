@@ -18,8 +18,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
       - name: Lint + test
-        run: ./init.sh
+        run: |
+          poetry run ruff check .
+          poetry run black --check .
+          poetry run mypy app
+          poetry run pytest -q
 
       # yata-0019: the account id is a GitHub secret, never hardcoded (this
       # repo is public). Failing fast here beats letting
