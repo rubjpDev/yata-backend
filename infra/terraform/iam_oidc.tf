@@ -78,6 +78,17 @@ data "aws_iam_policy_document" "deploy_perms" {
     ]
     resources = ["*"]
   }
+
+  # deploy.yml:110 resolves the box with `aws ec2 describe-instances` before
+  # sending the SSM command. `ec2:DescribeInstances` does not support
+  # resource-level permissions, so scoping `resources` to the instance ARN
+  # here would look tighter but silently deny every call.
+  statement {
+    sid       = "Ec2DescribeInstances"
+    effect    = "Allow"
+    actions   = ["ec2:DescribeInstances"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "deploy" {
