@@ -1,7 +1,11 @@
 """Golden structural evals against a REAL model (R58).
 
 Skipped unless `YATA_TEST_LLM=1` **and** `YATA_TEST_PG_URL` are both set — a
-real Bedrock call plus the real checkpointer. Every assertion is structural:
+real Bedrock call plus the real checkpointer. `get_llm_client()` also needs
+`YATA_LLM=bedrock` set (yata-0018) to actually return the real client rather
+than the local fake; without it this suite runs, but every "real" call is
+the deterministic fake, and the structural assertions below still pass
+trivially. Every assertion is structural:
 session count equals the proposed `days`, no set falls outside the engine's
 landmark rules, every prescribed weight matches `engine.prescribe_week`
 called in isolation. Nothing here asserts on the `rationale` or on any other

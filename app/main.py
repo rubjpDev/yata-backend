@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from app import auth, blocks, bodyweight, coach, exercises, health, profile, sessions
 from app.config import settings
-from app.deps import get_embedding_client
+from app.deps import get_embedding_client, get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     Scheduled with `create_task` rather than awaited, so startup — and
     `GET /v1/health` — never wait on the model to load (D-6).
+
+    Also builds the LLM client eagerly, but only when `YATA_LLM=bedrock`
+    (yata-0018): unlike the embedding warm-up, this call is unguarded on
+    purpose — if the real client is requested and no AWS credentials are
+    found, `get_llm_client()` raises and startup fails loudly, rather than
+    letting the process serve traffic that would fail mid-request.
     """
     if settings.environment == "production":
         asyncio.create_task(_warm_embedding_client())
+    if settings.llm_provider == "bedrock":
+        get_llm_client()
     yield
 
 

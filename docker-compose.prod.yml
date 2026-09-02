@@ -21,6 +21,10 @@ services:
       DATABASE_URL: "postgresql+asyncpg://yata:${POSTGRES_PASSWORD}@db:5432/yata"
       SECRET_KEY: ${SECRET_KEY}
       ENVIRONMENT: "production"
+      # Explicit opt-in for the real Bedrock LLM client (yata-0018): without
+      # it the app serves the local fake, even with AWS credentials present.
+      # The container's task/instance role supplies the credentials.
+      YATA_LLM: "bedrock"
     depends_on:
       db:
         condition: service_healthy

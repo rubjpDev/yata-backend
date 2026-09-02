@@ -1,5 +1,6 @@
 """Application configuration loaded from environment variables."""
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -28,6 +29,14 @@ class Settings(BaseSettings):
     llm_model: str = "qwen.qwen3-next-80b-a3b"
     llm_region: str = "eu-west-1"
     llm_timeout_seconds: float = 60.0
+
+    # Dedicated opt-in gate for the real Bedrock client (yata-0018): ambient
+    # AWS credentials must never be enough on their own to reach a paid API,
+    # so this is a switch of its own, independent of `environment`. Anything
+    # other than "bedrock" — including the default — makes
+    # `app.deps.get_llm_client` serve `app.llm.FakeLLMClient` instead. Set to
+    # "bedrock" in `docker-compose.prod.yml`'s `api` service.
+    llm_provider: str = Field(default="fake", validation_alias="YATA_LLM")
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

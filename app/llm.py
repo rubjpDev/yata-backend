@@ -1,10 +1,16 @@
-"""LLM clients: the injectable interface and its Bedrock implementation.
+"""LLM clients: the injectable interface, its Bedrock implementation, and the
+default-served fake.
 
-Mirrors `app.embeddings.EmbeddingClient`: a `Protocol`, one real implementation,
-one deterministic fake living in the tests (R19). `async` because the call is
-network I/O inside an async route — a blocking call stalls the event loop for
-the whole proposal (`EmbeddingClient` is sync because it is local CPU work,
-this is not).
+Mirrors `app.embeddings.EmbeddingClient`: a `Protocol`, one real
+implementation. Unlike `EmbeddingClient`, the fake here (`FakeLLMClient`)
+lives in `app/`, not in the tests: it is what `app.deps.get_llm_client`
+serves by default, so a local run with ambient AWS credentials cannot reach
+a paid API without the explicit `YATA_LLM=bedrock` opt-in (yata-0018). The
+richer, call-tracking fakes used by the coach graph's own unit tests still
+live in `tests/test_coach.py` (R19) — those exercise parse/retry paths this
+one does not need to. `async` because the real call is network I/O inside an
+async route — a blocking call stalls the event loop for the whole proposal
+(`EmbeddingClient` is sync because it is local CPU work, this is not).
 
 R15/R62 pre-flight (Amazon Bedrock, eu-west-1, Qwen3 Next 80B A3B, R0-A):
 **path B** — `boto3` + `bedrock-runtime` Converse, wrapped in
@@ -20,6 +26,7 @@ recorded verbatim in `progress/impl_yata-0013-coach-graph-and-human-gate.md`.
 """
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -119,4 +126,35 @@ class BedrockConverseClient:
             prompt_tokens=usage.get("inputTokens"),
             completion_tokens=usage.get("outputTokens"),
             latency_ms=latency_ms,
+        )
+
+
+_FAKE_PROPOSAL_TEXT = json.dumps(
+    {
+        "intent": "accumulation",
+        "days": 3,
+        "sessions": [{"equipment_config": {}} for _ in range(3)],
+        "rationale": "local development fake (YATA_LLM != bedrock) — no LLM was called",
+    }
+)
+
+
+class FakeLLMClient:
+    """`LLMClient` default: deterministic, offline, never a network call.
+
+    `app.deps.get_llm_client` serves this whenever `settings.llm_provider`
+    is not `"bedrock"` — the default. The fixed payload parses as a valid
+    `WeekProposal` (same shape as `tests.test_coach._valid_proposal_json`),
+    so the coach graph exercises its real parse/validate path in local
+    development instead of skipping it.
+    """
+
+    async def complete(self, *, system: str, user: str) -> LLMResponse:
+        """Return the fixed proposal; ignores the prompt entirely."""
+        return LLMResponse(
+            text=_FAKE_PROPOSAL_TEXT,
+            model="fake-local",
+            prompt_tokens=0,
+            completion_tokens=0,
+            latency_ms=0,
         )

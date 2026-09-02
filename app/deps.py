@@ -4,6 +4,7 @@ from datetime import date
 from functools import lru_cache
 from typing import Any
 
+import boto3
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -16,7 +17,7 @@ from app.config import settings
 from app.db import AsyncSessionLocal, get_db
 from app.embeddings import FastEmbedClient
 from app.graph import Retriever
-from app.llm import BedrockConverseClient, LLMClient
+from app.llm import BedrockConverseClient, FakeLLMClient, LLMClient
 from app.models import User
 from app.security import decode_token
 
@@ -62,6 +63,27 @@ def get_embedding_client() -> FastEmbedClient:
     return FastEmbedClient()
 
 
+_BEDROCK_CREDENTIALS_HINT = (
+    "YATA_LLM=bedrock is set but boto3 found no AWS credentials (checked "
+    "env vars, ~/.aws/credentials, and any instance/role credentials). "
+    "Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (or run under a role that "
+    "provides them) before starting the app, or unset YATA_LLM to use the "
+    "local fake instead."
+)
+
+
+def _require_bedrock_credentials() -> None:
+    """Raise with an actionable message if boto3 can't resolve credentials.
+
+    Called from `get_llm_client()`, which `app.main.lifespan` calls eagerly
+    at startup when `YATA_LLM=bedrock` — so a missing credential crashes the
+    process immediately (R-yata-0018) instead of surfacing on the first
+    coach request, mid-way through a user's flow.
+    """
+    if boto3.Session().get_credentials() is None:
+        raise RuntimeError(_BEDROCK_CREDENTIALS_HINT)
+
+
 @lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient:
     """The process-wide LLM client, built on first call, never at import.
@@ -69,7 +91,16 @@ def get_llm_client() -> LLMClient:
     Cached in the same injectable-resource slot as `get_today` and
     `get_embedding_client`; every coach route takes it via `Depends`, and
     tests replace it with `app.dependency_overrides` (R18).
+
+    Ambient AWS credentials are never enough on their own to reach the paid
+    Bedrock API (yata-0018): the dedicated `YATA_LLM=bedrock` opt-in
+    (`settings.llm_provider`) is required, and its absence — the default —
+    serves `FakeLLMClient` instead, no matter what credentials happen to be
+    lying around in the shell.
     """
+    if settings.llm_provider != "bedrock":
+        return FakeLLMClient()
+    _require_bedrock_credentials()
     return BedrockConverseClient()
 
 
