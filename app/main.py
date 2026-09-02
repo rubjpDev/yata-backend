@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 from app import auth, blocks, bodyweight, coach, exercises, health, profile, sessions
 from app.config import settings
@@ -53,6 +54,14 @@ app = FastAPI(
     description="Powerlifting training analysis platform — REST API",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,  # tokens travel in Authorization, never a cookie
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(health.router, prefix="/v1")

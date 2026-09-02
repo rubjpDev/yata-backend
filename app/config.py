@@ -1,7 +1,27 @@
 """Application configuration loaded from environment variables."""
 
-from pydantic import Field
-from pydantic_settings import BaseSettings
+from typing import Annotated
+
+from pydantic import BeforeValidator, Field
+from pydantic_settings import BaseSettings, NoDecode
+
+
+def _split_csv(value: object) -> object:
+    """Accept a comma-separated string for list settings read from the shell.
+
+    `pydantic-settings` parses list-typed fields from the environment as
+    JSON by default, which is a surprising trap for a plain
+    `CORS_ORIGINS=a,b` env var — it raises before this validator even runs.
+    `NoDecode` opts the field out of that JSON pre-parsing so the raw string
+    reaches this function, which then splits it by comma; a value that is
+    already a list (e.g. the Python default) passes through unchanged.
+    """
+    if isinstance(value, str):
+        return [origin.strip() for origin in value.split(",") if origin.strip()]
+    return value
+
+
+CommaSeparatedList = Annotated[list[str], NoDecode, BeforeValidator(_split_csv)]
 
 
 class Settings(BaseSettings):
@@ -37,6 +57,15 @@ class Settings(BaseSettings):
     # `app.deps.get_llm_client` serve `app.llm.FakeLLMClient` instead. Set to
     # "bedrock" in `docker-compose.prod.yml`'s `api` service.
     llm_provider: str = Field(default="fake", validation_alias="YATA_LLM")
+
+    # Origins allowed to call the API cross-origin (CORS, yata-0026). Never
+    # "*": the API is publicly deployed. Comma-separated in the environment
+    # (`CommaSeparatedList`), defaulting to the Vite dev server; add the
+    # deployed frontend's origin here once it exists.
+    cors_origins: CommaSeparatedList = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
